@@ -46,6 +46,12 @@ the Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 #include <unistd.h>
 #endif
 #include <time.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#ifdef __linux__
+#include <execinfo.h>
+#endif
 
 #define LOAD_SEARCH    /* Use the search path in load command. */
 
@@ -7128,7 +7134,12 @@ Char *s;
 {  
    Char cmdline[512];
    char *browser;
-  
+   char help_url[512];
+   char help_path[512];
+   FILE *test_file;
+   char *loglib_env;
+   int is_wsl = 0;
+   
 #ifdef OS2
    vmessage("Starting a help window");
 #else
@@ -7143,12 +7154,11 @@ Char *s;
    systems.                                          */
     sprintf(cmdline, "start EPM.EXE %s\n",loghelpname);
 #else
-   /* Detect WSL2 and use appropriate browser launcher */
+   /* Detect WSL2 first to determine how to handle local files */
    browser = getenv("BROWSER");
    if (!browser) {
      /* Check if we're running on WSL2 (Microsoft WSL) */
      FILE *proc_version = fopen("/proc/version", "r");
-     int is_wsl = 0;
      if (proc_version) {
        char line[256];
        if (fgets(line, sizeof(line), proc_version)) {
@@ -7158,19 +7168,67 @@ Char *s;
        }
        fclose(proc_version);
      }
-     
+   }
+   
+   /* Try to find local HELP.md first */
+   help_url[0] = '\0';
+   loglib_env = getenv("LOGLIB");
+   if (loglib_env != NULL && strlen(loglib_env) > 0) {
+     /* LOGLIB is typically set to <chipmunk_dir>/log/lib */
+     /* Go up two directories to find root, then check for HELP.md */
+     strncpy(help_path, loglib_env, sizeof(help_path) - 1);
+     help_path[sizeof(help_path) - 1] = '\0';
+     /* Remove trailing /log/lib if present */
+     {
+       int len = strlen(help_path);
+       if (len >= 8 && strcmp(help_path + len - 8, "/log/lib") == 0) {
+         help_path[len - 8] = '\0';
+       } else if (len >= 4 && strcmp(help_path + len - 4, "/lib") == 0) {
+         help_path[len - 4] = '\0';
+       }
+     }
+     /* Append /HELP.md */
+     if (strlen(help_path) + 9 < sizeof(help_path)) {
+       strcat(help_path, "/HELP.md");
+       /* Check if file exists */
+       test_file = fopen(help_path, "r");
+       if (test_file != NULL) {
+         fclose(test_file);
+         /* File exists */
+         if (is_wsl) {
+           /* In WSL2, file:// URLs with Linux paths don't work well with Windows browsers */
+           /* For simplicity and reliability, use GitHub URL in WSL2 even if local file exists */
+           /* This ensures the help always opens correctly */
+           /* (Local file access from WSL2 to Windows via file:// URLs is problematic) */
+           help_url[0] = '\0'; /* Will fall through to GitHub URL */
+         } else {
+           /* Native Linux: use file:// URL directly */
+           sprintf(help_url, "file://%s", help_path);
+         }
+       }
+     }
+   }
+   
+   /* If local file not found or conversion failed, use GitHub URL */
+   if (help_url[0] == '\0') {
+     strncpy(help_url, "https://github.com/sensorsINI/chipmunk/blob/main/HELP.md", sizeof(help_url) - 1);
+     help_url[sizeof(help_url) - 1] = '\0';
+   }
+   
+   /* Build command to launch browser */
+   if (!browser) {
      if (is_wsl) {
        /* Use Windows cmd.exe to open browser in WSL2 */
        /* Change to Windows drive to avoid UNC path issues */
-       sprintf(cmdline, "cd /mnt/c && cmd.exe /c start \"\" \"https://john-lazzaro.github.io/chipmunk/document/log/index.html\" >/dev/null 2>&1 &");
+       sprintf(cmdline, "cd /mnt/c && cmd.exe /c start \"\" \"%s\" >/dev/null 2>&1 &", help_url);
      } else {
        /* Use xdg-open for native Linux systems */
        browser = "xdg-open";
-       sprintf(cmdline, "%s 'https://john-lazzaro.github.io/chipmunk/document/log/index.html' >/dev/null 2>&1 &", browser);
+       sprintf(cmdline, "%s '%s' >/dev/null 2>&1 &", browser, help_url);
      }
    } else {
      /* User specified browser via BROWSER environment variable */
-     sprintf(cmdline, "%s 'https://john-lazzaro.github.io/chipmunk/document/log/index.html' >/dev/null 2>&1 &", browser);
+     sprintf(cmdline, "%s '%s' >/dev/null 2>&1 &", browser, help_url);
    }
 #endif /* OS2 */
 
@@ -21963,6 +22021,282 @@ Static Void shownews()
 
 
 
+/*================  CRASH HANDLER  ================*/
+/*=                                              =*/
+/*=  Handle segmentation faults and other       =*/
+/*=     crashes with useful diagnostic info      =*/
+/*=                                              =*/
+/*================================================*/
+
+#ifndef OS2
+static void crash_handler(int sig, siginfo_t *info, void *context)
+{
+  FILE *crash_log;
+  char crash_log_path[512];
+  char *loglib_env;
+  time_t now;
+  struct tm *tm_info;
+  char timestamp[64];
+  
+  /* Suppress further signals to avoid recursive crashes */
+  signal(SIGSEGV, SIG_DFL);
+  signal(SIGBUS, SIG_DFL);
+  signal(SIGABRT, SIG_DFL);
+  signal(SIGFPE, SIG_DFL);
+  
+  /* Get timestamp */
+  time(&now);
+  tm_info = localtime(&now);
+  strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+  
+  /* Try to write crash log to file */
+  crash_log = NULL;
+  loglib_env = getenv("LOGLIB");
+  if (loglib_env != NULL && strlen(loglib_env) > 0) {
+    /* Find repo root from LOGLIB */
+    char crash_path[512];
+    strncpy(crash_path, loglib_env, sizeof(crash_path) - 1);
+    crash_path[sizeof(crash_path) - 1] = '\0';
+    /* Remove trailing /log/lib if present */
+    {
+      int len = strlen(crash_path);
+      if (len >= 8 && strcmp(crash_path + len - 8, "/log/lib") == 0) {
+        crash_path[len - 8] = '\0';
+      } else if (len >= 4 && strcmp(crash_path + len - 4, "/lib") == 0) {
+        crash_path[len - 4] = '\0';
+      }
+    }
+    snprintf(crash_log_path, sizeof(crash_log_path), "%s/chipmunk-crash.log", crash_path);
+    crash_log = fopen(crash_log_path, "a");
+  } else {
+    /* Fallback to /tmp */
+    snprintf(crash_log_path, sizeof(crash_log_path), "/tmp/chipmunk-crash.log");
+    crash_log = fopen(crash_log_path, "a");
+  }
+  
+  /* Write crash information */
+  fprintf(stderr, "\n");
+  fprintf(stderr, "========================================\n");
+  fprintf(stderr, "CHIPMUNK CRASH DETECTED\n");
+  fprintf(stderr, "========================================\n");
+  fprintf(stderr, "Time: %s\n", timestamp);
+  
+  switch (sig) {
+    case SIGSEGV:
+      fprintf(stderr, "Signal: SIGSEGV (Segmentation Fault)\n");
+      fprintf(stderr, "Cause: Memory access violation (invalid pointer, buffer overflow, etc.)\n");
+      break;
+    case SIGBUS:
+      fprintf(stderr, "Signal: SIGBUS (Bus Error)\n");
+      fprintf(stderr, "Cause: Invalid memory alignment or access to non-existent memory\n");
+      break;
+    case SIGABRT:
+      fprintf(stderr, "Signal: SIGABRT (Abort)\n");
+      fprintf(stderr, "Cause: Program called abort() or assertion failed\n");
+      break;
+    case SIGFPE:
+      fprintf(stderr, "Signal: SIGFPE (Floating Point Exception)\n");
+      fprintf(stderr, "Cause: Division by zero or invalid floating point operation\n");
+      break;
+    default:
+      fprintf(stderr, "Signal: %d\n", sig);
+      fprintf(stderr, "Cause: Unknown crash\n");
+      break;
+  }
+  
+  if (info != NULL) {
+    fprintf(stderr, "Fault address: %p\n", info->si_addr);
+  }
+  
+#ifdef __linux__
+  {
+    void *array[50];
+    int size;
+    char **strings;
+    int i;
+    char addr2line_cmd[512];
+    FILE *addr2line_pipe;
+    char line_buf[512];
+    char exe_path[512];
+    ssize_t exe_path_len;
+    
+    size = backtrace(array, 50);
+    strings = backtrace_symbols(array, size);
+    
+    /* Try to get executable path for addr2line */
+    exe_path[0] = '\0';
+    exe_path_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (exe_path_len > 0) {
+      exe_path[exe_path_len] = '\0';
+    } else {
+      /* Fallback: try to get from LOGLIB or use default */
+      char *loglib_env = getenv("LOGLIB");
+      if (loglib_env != NULL) {
+        snprintf(exe_path, sizeof(exe_path), "%s/../../bin/diglog", loglib_env);
+        /* Remove /log/lib and add /bin/diglog */
+        {
+          int len = strlen(exe_path);
+          if (len >= 8 && strcmp(exe_path + len - 8, "/log/lib") == 0) {
+            exe_path[len - 8] = '\0';
+            strcat(exe_path, "/bin/diglog");
+          }
+        }
+      } else {
+        strncpy(exe_path, "./bin/diglog", sizeof(exe_path) - 1);
+        exe_path[sizeof(exe_path) - 1] = '\0';
+      }
+    }
+    
+    if (strings != NULL) {
+      fprintf(stderr, "\nStack trace (%d frames):\n", size);
+      for (i = 0; i < size; i++) {
+        fprintf(stderr, "  [%2d] %s", i, strings[i]);
+        
+        /* Try to get source file and line number using addr2line */
+        if (exe_path[0] != '\0') {
+          snprintf(addr2line_cmd, sizeof(addr2line_cmd), 
+                   "addr2line -e %s -f -C -p %p 2>/dev/null", 
+                   exe_path, array[i]);
+          addr2line_pipe = popen(addr2line_cmd, "r");
+          if (addr2line_pipe != NULL) {
+            if (fgets(line_buf, sizeof(line_buf), addr2line_pipe) != NULL) {
+              /* Remove trailing newline */
+              {
+                int len = strlen(line_buf);
+                if (len > 0 && line_buf[len - 1] == '\n') {
+                  line_buf[len - 1] = '\0';
+                }
+              }
+              /* Only show if addr2line found a valid location (not "??:0") */
+              if (strstr(line_buf, "??:0") == NULL && strstr(line_buf, "?? ??:0") == NULL) {
+                fprintf(stderr, "\n      -> %s", line_buf);
+              }
+            }
+            pclose(addr2line_pipe);
+          }
+        }
+        fprintf(stderr, "\n");
+      }
+      free(strings);
+    }
+  }
+#endif
+  
+  fprintf(stderr, "\nTo help fix this issue, please:\n");
+  fprintf(stderr, "1. Note what you were doing when the crash occurred\n");
+  fprintf(stderr, "2. Check if you can reproduce the crash\n");
+  fprintf(stderr, "3. Report the issue at: https://github.com/sensorsINI/chipmunk/issues\n");
+  fprintf(stderr, "4. Include this crash information and the crash log file (if created)\n");
+  
+  if (crash_log != NULL) {
+    fprintf(crash_log, "\n========================================\n");
+    fprintf(crash_log, "CHIPMUNK CRASH LOG\n");
+    fprintf(crash_log, "========================================\n");
+    fprintf(crash_log, "Time: %s\n", timestamp);
+    fprintf(crash_log, "Signal: %d\n", sig);
+    if (info != NULL) {
+      fprintf(crash_log, "Fault address: %p\n", info->si_addr);
+    }
+#ifdef __linux__
+    {
+      void *array[50];
+      int size;
+      char **strings;
+      int i;
+      char addr2line_cmd[512];
+      FILE *addr2line_pipe;
+      char line_buf[512];
+      char exe_path[512];
+      ssize_t exe_path_len;
+      
+      size = backtrace(array, 50);
+      strings = backtrace_symbols(array, size);
+      
+      /* Try to get executable path for addr2line */
+      exe_path[0] = '\0';
+      exe_path_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+      if (exe_path_len > 0) {
+        exe_path[exe_path_len] = '\0';
+      } else {
+        /* Fallback: try to get from LOGLIB or use default */
+        char *loglib_env = getenv("LOGLIB");
+        if (loglib_env != NULL) {
+          snprintf(exe_path, sizeof(exe_path), "%s/../../bin/diglog", loglib_env);
+          /* Remove /log/lib and add /bin/diglog */
+          {
+            int len = strlen(exe_path);
+            if (len >= 8 && strcmp(exe_path + len - 8, "/log/lib") == 0) {
+              exe_path[len - 8] = '\0';
+              strcat(exe_path, "/bin/diglog");
+            }
+          }
+        } else {
+          strncpy(exe_path, "./bin/diglog", sizeof(exe_path) - 1);
+          exe_path[sizeof(exe_path) - 1] = '\0';
+        }
+      }
+      
+      if (strings != NULL) {
+        fprintf(crash_log, "\nStack trace (%d frames):\n", size);
+        for (i = 0; i < size; i++) {
+          fprintf(crash_log, "  [%2d] %s", i, strings[i]);
+          
+          /* Try to get source file and line number using addr2line */
+          if (exe_path[0] != '\0') {
+            snprintf(addr2line_cmd, sizeof(addr2line_cmd), 
+                     "addr2line -e %s -f -C -p %p 2>/dev/null", 
+                     exe_path, array[i]);
+            addr2line_pipe = popen(addr2line_cmd, "r");
+            if (addr2line_pipe != NULL) {
+              if (fgets(line_buf, sizeof(line_buf), addr2line_pipe) != NULL) {
+                /* Remove trailing newline */
+                {
+                  int len = strlen(line_buf);
+                  if (len > 0 && line_buf[len - 1] == '\n') {
+                    line_buf[len - 1] = '\0';
+                  }
+                }
+                /* Only show if addr2line found a valid location (not "??:0") */
+                if (strstr(line_buf, "??:0") == NULL && strstr(line_buf, "?? ??:0") == NULL) {
+                  fprintf(crash_log, "\n      -> %s", line_buf);
+                }
+              }
+              pclose(addr2line_pipe);
+            }
+          }
+          fprintf(crash_log, "\n");
+        }
+        free(strings);
+      }
+    }
+#endif
+    fprintf(crash_log, "========================================\n\n");
+    fclose(crash_log);
+    fprintf(stderr, "\nCrash log written to: %s\n", crash_log_path);
+  }
+  
+  fprintf(stderr, "========================================\n");
+  fprintf(stderr, "\n");
+  
+  /* Re-raise signal to get core dump if enabled */
+  raise(sig);
+}
+
+static void setup_crash_handlers(void)
+{
+  struct sigaction sa;
+  
+  sa.sa_sigaction = crash_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+  
+  sigaction(SIGSEGV, &sa, NULL);
+  sigaction(SIGBUS, &sa, NULL);
+  sigaction(SIGABRT, &sa, NULL);
+  sigaction(SIGFPE, &sa, NULL);
+}
+#endif /* OS2 */
+
 /*================  MAIN PROGRAM  ================*/
 /*=                                              =*/
 /*=  Initialize.                                 =*/
@@ -21977,6 +22311,11 @@ int main(int argc, Char * argv[])
 {
   long FORLIM;
   Char STR1[81];
+
+#ifndef OS2
+  /* Setup crash handlers for better error reporting */
+  setup_crash_handlers();
+#endif
 
   nc_text_in_window = 1;  
   PASCAL_MAIN(argc, argv);

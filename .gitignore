@@ -40,3 +40,8 @@ dist/
 *.sublime-workspace
 
 chipmunk-*.tar.gz
+chipmunk-crash.log
+
+# Test files
+test_crash_handler
+/tmp/chipmunk-crash-test.log

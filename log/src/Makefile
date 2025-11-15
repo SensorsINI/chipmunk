@@ -241,7 +241,7 @@ makeana:
 LOGOBJ = log.o $(TOOLOBJ) logstuff.o logdef.o
 
 log: $(LOGOBJ) tooldir.o $(LIBP2C) makeana
-	$(CC) $(CFLAGS) tooldir.o $(LOGOBJ) $(LIBP2C) $(LIBX11)  \
+	$(CC) $(CFLAGS) -rdynamic tooldir.o $(LOGOBJ) $(LIBP2C) $(LIBX11)  \
 	$(OTHERLIBS) -o log
 
 ## The following permits you to link properly with AmigaOS and 
