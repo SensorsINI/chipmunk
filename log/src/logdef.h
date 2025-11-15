@@ -34,7 +34,7 @@
 
 #define log_million     1000000L   /* Very large array size */
 
-#define log_version     "5.61"   /* LOG version number */
+#define log_version     "5.66"   /* LOG version number */
 
 #define Debugging       false   /* Compile with DEBUG option */
 #define Checking        true   /* Compile with range checking, etc. */

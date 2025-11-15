@@ -6,6 +6,11 @@
 
 This repository contains the Chipmunk system tools, originally developed by Dave Gillespie, John Lazzaro, and others.
 
+## Version
+
+- **Chipmunk/LOG Version**: 5.66
+- **SPICE Converter Version**: 1.0 Beta
+
 ## Original Source
 
 The original Chipmunk tools are distributed via GitHub Pages:
