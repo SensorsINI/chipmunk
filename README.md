@@ -57,13 +57,62 @@ This repository includes the following modifications:
    make install
    ```
 
-4. Run the tools:
+4. Run the analog simulator:
    ```bash
    cd ~/chipmunk/bin
    ./analog
    ```
 
-The wrapper scripts automatically configure the `LOGLIB` environment variable.
+The wrapper scripts automatically configure the `LOGLIB` environment variable and load the appropriate configuration file (`analog.cnf` for analog mode).
+
+## Usage
+
+### Running Analog Simulator
+
+The `analog` command launches the Log system in analog simulation mode:
+
+```bash
+./analog                    # Launch analog simulator
+./analog -c custom.cnf      # Use custom configuration file
+./analog circuit.lgf        # Open a circuit file
+```
+
+### Command Line Options
+
+- `-c <file>`: Specify configuration file (default: `analog.cnf`)
+- `-v`: Vanilla LOG mode (no CNF file)
+- `-x <display>`: Specify X display name
+- `-h <dir>`: Specify home directory
+- `file`: Open a circuit file on startup
+
+## Documentation
+
+### Official Documentation
+
+The complete documentation is available on the [official Chipmunk website](https://john-lazzaro.github.io/chipmunk/):
+
+- **[Log Reference Manual](https://john-lazzaro.github.io/chipmunk/document/log/index.html)**: Complete reference for all Log system features
+  - [Getting Started](https://john-lazzaro.github.io/chipmunk/document/log/index.html#getting-started)
+  - [Circuit Editing](https://john-lazzaro.github.io/chipmunk/document/log/index.html#circuit-editing)
+  - [Analog Simulator](https://john-lazzaro.github.io/chipmunk/document/log/index.html#analog-simulator)
+  - [Digital Simulator](https://john-lazzaro.github.io/chipmunk/document/log/index.html#digital-simulator)
+  - [Plotting Circuits](https://john-lazzaro.github.io/chipmunk/document/log/index.html#plotting-circuits)
+
+### For Analog Users
+
+- **[Postscript Manual](https://john-lazzaro.github.io/chipmunk/document/log/index.html#postscript-manual)**: Guide for analog simulation users
+- **[Interactive Lessons](https://john-lazzaro.github.io/chipmunk/document/log/index.html#interactive-lessons)**: Five annotated circuit schematics (`lesson1.lgf` through `lesson5.lgf`) for learning Analog
+- **[Pocket Reference](https://john-lazzaro.github.io/chipmunk/document/log/index.html#pocket-reference)**: 28 tips for novice Analog users (see `log/lib/cheat.text`)
+- **[Device Model Details](https://john-lazzaro.github.io/chipmunk/document/log/index.html#device-model-details)**: Documentation on FET7 series MOS models and other device models
+- **[Simulation Engine Details](https://john-lazzaro.github.io/chipmunk/document/log/index.html#simulation-engine-details)**: Technical documentation on how the simulation engine works
+- **[Adding New Gates](https://john-lazzaro.github.io/chipmunk/document/log/index.html#adding-new-gates)**: Guide for adding custom gates to Analog
+
+### Reference Material
+
+- [List of Commands](https://john-lazzaro.github.io/chipmunk/document/log/index.html#list-of-commands)
+- [Configuration Files](https://john-lazzaro.github.io/chipmunk/document/log/index.html#configuration-files)
+- [Analog Simulator Commands](https://john-lazzaro.github.io/chipmunk/document/log/index.html#analog-simulator-commands)
+- [Command-line Options](https://john-lazzaro.github.io/chipmunk/document/log/index.html#command-line-options)
 
 ## Attribution
 
@@ -79,5 +128,5 @@ Maintained under Unix by Dave Gillespie and John Lazzaro.
 
 ## Repository Information
 
-This repository is maintained by the sensorsINI organization. For the original source and official documentation, please visit the [official Chipmunk website](https://john-lazzaro.github.io/chipmunk/).
+This repository is maintained by Tobi Delbruck for the [Sensors Group](https://sensors.ini.ch) at the Inst. of Neuroinformatics (UZH-ETH Zurich). For the original source and official documentation, please visit the [official Chipmunk website](https://john-lazzaro.github.io/chipmunk/).
 

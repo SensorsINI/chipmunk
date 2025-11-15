@@ -1,7 +1,11 @@
 #!/bin/bash
 # Wrapper script for analog that sets the LOGLIB environment variable
-# This ensures the program can find its configuration files
+# and launches the log program in analog mode (not diglog mode)
+# This ensures the program can find its configuration files and loads analog.cnf
 CHIPMUNK_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export LOGLIB="${CHIPMUNK_DIR}/log/lib"
-exec "${CHIPMUNK_DIR}/bin/diglog" "$@"
+
+# Use -c option to explicitly load analog.cnf configuration
+# This ensures analog mode is used even if the binary is called diglog
+exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf "$@"
 
