@@ -6,6 +6,9 @@
 core
 *.core
 
+# Generated files
+log/src/ana/logdef.h
+
 # Editor backup files
 *~
 *.swp
