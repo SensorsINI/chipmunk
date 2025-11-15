@@ -6,13 +6,16 @@
 
 .PHONY: all build clean install default help check
 
+# Sentinel file to track successful requirements check
+REQUIREMENTS_CHECKED := .requirements_checked
+
 # Default target
 default: all
 
 # Build everything (psys must be built before log)
 all: build
 
-build: psys/src/libp2c.a bin/diglog
+build: $(REQUIREMENTS_CHECKED) psys/src/libp2c.a bin/diglog
 	@echo ""
 	@echo "Build complete! You can now run: ./bin/analog"
 
@@ -34,10 +37,26 @@ clean:
 	$(MAKE) -C psys/src clean
 	@echo "Cleaning log..."
 	$(MAKE) -C log/src clean
+	@echo "Removing requirements check sentinel..."
+	@rm -f $(REQUIREMENTS_CHECKED)
 	@echo "Clean complete!"
 
 # Install everything (same as build)
 install: build
+
+# Run check_requirements.sh and create sentinel file on success
+$(REQUIREMENTS_CHECKED):
+	@echo "Checking requirements..."
+	@if ./check_requirements.sh; then \
+		touch $(REQUIREMENTS_CHECKED); \
+		echo ""; \
+		echo "Requirements check passed. Proceeding with build..."; \
+		echo ""; \
+	else \
+		echo ""; \
+		echo "Requirements check failed. Please fix the issues above and try again."; \
+		exit 1; \
+	fi
 
 # Check system requirements (compiler, X11, fonts, etc.)
 check:
