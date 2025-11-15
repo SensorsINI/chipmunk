@@ -216,8 +216,11 @@ TOOLOBJ = $(SIMOBJ) lplot.o logspc.o logntk.o
 
 install: all
 	cp log $(BINDIR)/diglog
-	-rm -f $(BINDIR)/analog
-	-(cd $(BINDIR); ln -s diglog analog)
+	# Don't overwrite analog wrapper script if it exists as a regular file
+	-if [ ! -f $(BINDIR)/analog ] || [ -L $(BINDIR)/analog ]; then \
+		rm -f $(BINDIR)/analog; \
+		(cd $(BINDIR); ln -s diglog analog); \
+	fi
 	cp loged $(BINDIR)/loged
 	cp fixfet7 $(BINDIR)/fixfet7
 

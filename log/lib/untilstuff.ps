@@ -1,0 +1,76 @@
+% Caged_date='r% Last change: $x by $u'
+% Last change: Feb 1, 1989 3:16:38 pm by calvin
+/UntilState save def
+180 dict begin
+/UNTILFINISH { end UntilState restore } def
+% $ Include /usr/cs10/src/p-system/lib/texstuff.ps
+
+% <size in points (72 per inch)> pt <size in user-units>
+% Feed pt through the default matrix to get device coordinates,
+% and then reverse transform it through the current matrix to get user units
+/pt { dup matrix defaultmatrix dtransform idtransform pop abs } def
+
+% Macro to define fonts-takes "/ID Size /Font-Name" as params
+/DF { findfont exch pt dup 0.8 mul /STRH exch def scalefont def } def
+% Define a default text font...
+/DT { /DT0 20 /Times-Roman DF DT0 SF } def
+% Macros for positioning Text-take "(string) x y" as params
+/strbox { gsave newpath 0 0 moveto false charpath
+          40 setflat flattenpath pathbbox grestore } def
+%/strsizes { strbox 4 2 roll exch pop } def
+/strsizes { stringwidth pop STRH 0 } def
+% Usage: string    _strsizes_     width height depth
+/TOP { pop -1 mul } def
+/VCENT { pop -.5 mul } def
+/LOW { pop pop 0 } def
+/BOT { exch pop -1 mul } def
+/LEFT { exch pop 0 exch } def
+/HCENT { exch -.5 mul exch } def
+/RIGHT { exch -1 mul exch } def
+
+/DEBUG { (Now showing:) print dup print (\n) print } def
+/TUL { moveto dup strsizes TOP LEFT rmoveto show } def
+/TUC { moveto dup strsizes TOP HCENT rmoveto show } def
+/TUR { moveto dup strsizes TOP RIGHT rmoveto show } def
+/TCL { moveto dup strsizes VCENT LEFT rmoveto show } def
+/TCC { moveto dup strsizes VCENT HCENT rmoveto show } def
+/TCR { moveto dup strsizes VCENT RIGHT rmoveto show } def
+/TLL { moveto dup strsizes LOW LEFT rmoveto show } def
+/TLC { moveto dup strsizes LOW HCENT rmoveto show } def
+/TLR { moveto dup strsizes LOW RIGHT rmoveto show } def
+/TBL { moveto dup strsizes BOT LEFT rmoveto show } def
+/TBC { moveto dup strsizes BOT HCENT rmoveto show } def
+/TBR { moveto dup strsizes BOT RIGHT rmoveto show } def
+% Shorthand for things
+/LD { load def } def
+/S /show LD
+/M /moveto LD
+/L /lineto LD
+/R /rlineto LD
+/DS { /DOTSIZE exch def } def
+5 pt DS
+/DOT { DOTSIZE 0 360 arc } def
+/D { 2 copy lineto stroke moveto } def
+/CT /rcurveto LD
+/CI { 0 360 arc } def
+/CP /closepath LD
+/NP /newpath LD
+/SF /setfont LD
+% defaults to use the old til-type stuff.  (FillPath and StrokePath)
+/FP { finpath } def
+/SP { finpath } def
+% Shorthand for colors
+/FILL { /FP /fill LD /SP /FP LD } def
+/FILLOUT { /FP { gsave gsave fill grestore 0 setgray stroke grestore } def 
+           /SP /FP LD } def
+/FILLSTROKE { /FP /fill LD /SP /stroke LD } def
+/STROKE { /FP /stroke LD /SP /FP LD } def
+/SG /setgray LD
+/SLW /setlinewidth LD
+/SLJ /setlinejoin LD
+/SLC /setlinecap LD
+/SD /setdash LD
+% Stuff to include comments in files
+/CmtY 10 def   % Starting Y position
+/Cmt { 20 CmtY moveto /Helvetica findfont 8 scalefont setfont show 
+       /CmtY CmtY 10 add store } def

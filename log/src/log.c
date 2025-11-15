@@ -7120,18 +7120,14 @@ Static Void dumpnodes()
 Static Void gethelp(s)
 Char *s;
 {  
-   Char cmdline[256];
-   char *pager;
+   Char cmdline[512];
+   char *browser;
   
 #ifdef OS2
    vmessage("Starting a help window");
 #else
-   vmessage("Starting an xterm for help");
+   vmessage("Opening help in browser");
 #endif /* OS2 */
-
-   pager = getenv("PAGER");
-   if (!pager)
-     pager = "more";
 
 #ifdef OS2
 /* Note that this is not fully correct since if you are running
@@ -7141,11 +7137,35 @@ Char *s;
    systems.                                          */
     sprintf(cmdline, "start EPM.EXE %s\n",loghelpname);
 #else
-   if (*m_display_name == '\0')
-    sprintf(cmdline, "xterm -e %s %s & \n", pager, loghelpname);
-   else
-    sprintf(cmdline, "xterm -display %s -e %s %s & \n",
-            m_display_name, pager, loghelpname);
+   /* Detect WSL2 and use appropriate browser launcher */
+   browser = getenv("BROWSER");
+   if (!browser) {
+     /* Check if we're running on WSL2 (Microsoft WSL) */
+     FILE *proc_version = fopen("/proc/version", "r");
+     int is_wsl = 0;
+     if (proc_version) {
+       char line[256];
+       if (fgets(line, sizeof(line), proc_version)) {
+         if (strstr(line, "Microsoft") || strstr(line, "WSL")) {
+           is_wsl = 1;
+         }
+       }
+       fclose(proc_version);
+     }
+     
+     if (is_wsl) {
+       /* Use Windows cmd.exe to open browser in WSL2 */
+       /* Change to Windows drive to avoid UNC path issues */
+       sprintf(cmdline, "cd /mnt/c && cmd.exe /c start \"\" \"https://john-lazzaro.github.io/chipmunk/document/log/index.html\" >/dev/null 2>&1 &");
+     } else {
+       /* Use xdg-open for native Linux systems */
+       browser = "xdg-open";
+       sprintf(cmdline, "%s 'https://john-lazzaro.github.io/chipmunk/document/log/index.html' >/dev/null 2>&1 &", browser);
+     }
+   } else {
+     /* User specified browser via BROWSER environment variable */
+     sprintf(cmdline, "%s 'https://john-lazzaro.github.io/chipmunk/document/log/index.html' >/dev/null 2>&1 &", browser);
+   }
 #endif /* OS2 */
 
    system(cmdline);
