@@ -283,8 +283,10 @@ Original authors:
 - Glenn Gribble
 - Adam Greenblatt
 - Maryann Maher
+Version 6 (with AI help)
+- Tobi Delbruck
 
-Maintained under Unix by Dave Gillespie and John Lazzaro.
+Maintained originally under Unix by Dave Gillespie and John Lazzaro and now Tobi Delbruck
 
 ## TODO / Future Improvements
 
