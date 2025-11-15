@@ -35,32 +35,43 @@ This repository includes the following modifications:
 
 - ANSI C compiler (typically GCC)
 - X11 (R4, R5, or R6)
-- X11 fonts: `xfonts-base`, `xfonts-75dpi`, `xfonts-100dpi`
+- **X11 fonts: `xfonts-base`, `xfonts-75dpi`, `xfonts-100dpi`** (required - see Installation Steps)
+  - These packages provide the `6x10` and `8x13` fonts that Chipmunk requires
+  - Without these fonts, the program will fail with X11 font errors
 
 ### Installation Steps
 
-1. Install required X11 fonts:
+1. **Install required X11 fonts** (required for Ubuntu/WSL2):
    ```bash
    sudo apt-get install xfonts-base xfonts-75dpi xfonts-100dpi
    xset fp rehash
    ```
-
-2. Compile the psys libraries first:
-   ```bash
-   cd psys/src
-   make install
+   
+   **Important**: The Chipmunk tools require the X11 fonts `6x10` and `8x13`. These fonts are provided by the packages above. Without them, you will see errors like:
+   ```
+   X Error of failed request: BadName (named color or font does not exist)
+   Major opcode of failed request: 45 (X_OpenFont)
    ```
 
-3. Compile the log tools:
+2. **Verify requirements** (optional but recommended):
    ```bash
-   cd log/src
-   make install
+   ./check_requirements.sh
+   ```
+   This script checks for fonts, X11 display, and other requirements.
+
+3. **Build the tools**:
+   ```bash
+   make
+   ```
+   Or build manually:
+   ```bash
+   cd psys/src && make install
+   cd ../../log/src && make install
    ```
 
-4. Run the analog simulator:
+4. **Run the analog simulator**:
    ```bash
-   cd ~/chipmunk/bin
-   ./analog
+   ./bin/analog
    ```
 
 The wrapper scripts automatically configure the `LOGLIB` environment variable and load the appropriate configuration file (`analog.cnf` for analog mode).
