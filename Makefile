@@ -18,6 +18,7 @@ all: build
 build: $(REQUIREMENTS_CHECKED) psys/src/libp2c.a bin/diglog
 	@echo ""
 	@echo "Build complete! You can now run: ./bin/analog"
+	@./scripts/path_setup.sh || true
 
 # Build psys libraries (required before building log)
 psys/src/libp2c.a:
