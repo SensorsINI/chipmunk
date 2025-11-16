@@ -22774,6 +22774,7 @@ _after_wire_draw:
     fclose(dumpfile);
   if (tracefile != NULL)
     fclose(tracefile);
+  m_save_window_geometry();  /* Save window size for next session */
   exit(0);
 }
 

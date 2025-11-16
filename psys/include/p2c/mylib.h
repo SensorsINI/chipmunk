@@ -284,6 +284,7 @@ extern void m_disposecchar();
 extern void m_getcchar();
 extern void m_graphics_on();
 extern void m_alpha_on();
+extern void m_save_window_geometry();
 
 #define m_graphics_off()
 #define m_alpha_off()

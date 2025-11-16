@@ -24,13 +24,13 @@ build: $(REQUIREMENTS_CHECKED) psys/src/libp2c.a bin/diglog
 psys/src/libp2c.a:
 	@echo "Building psys libraries..."
 	@echo "Note: Format-overflow warnings from legacy 1980s code are expected and suppressed."
-	$(MAKE) -C psys/src install
+	@$(MAKE) -C psys/src install 2>&1 | grep -v "gets.*function is dangerous" || true
 
 # Build log tools (depends on psys)
 bin/diglog: psys/src/libp2c.a
 	@echo "Building log tools..."
 	@echo "Note: Format-overflow warnings from legacy 1980s code are expected and suppressed."
-	$(MAKE) -C log/src install
+	@$(MAKE) -C log/src install 2>&1 | grep -v "gets.*function is dangerous" || true
 
 # Clean all build artifacts
 clean:

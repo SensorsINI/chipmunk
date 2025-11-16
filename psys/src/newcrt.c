@@ -1171,7 +1171,10 @@ char *buf;
 
   if (! nc_text_in_window) {
 #undef gets
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     return(gets(buf));
+#pragma GCC diagnostic pop
 #define gets nc_gets
   }
   if (! nc_initialized)

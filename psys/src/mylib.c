@@ -101,6 +101,10 @@ static int show_all_mylib_calls,
 	   show_key_calls,
 	   sync_all_calls;
 
+/* Static variables to track last known good window size for geometry persistence */
+static unsigned int last_window_width = 0;
+static unsigned int last_window_height = 0;
+
 static void init_debug_flags()
 {
   show_all_mylib_calls = (getenv("SHOW_ALL_MYLIB_CALLS") != NULL);
@@ -1032,6 +1036,10 @@ void WindowInitialize()
 
   Xfprintf(stderr, "XMapWindow()\n");
   XMapWindow(m_display, m_window);
+
+  /* Initialize window size tracking for geometry save */
+  last_window_width = WinW;
+  last_window_height = WinH;
 
   for (i = 0; i < ColorsInSet; i++) {
     Xfprintf(stderr, "gc[%d] = XCreateGC()\n", i);
@@ -4673,12 +4681,8 @@ m_picturevar *p;
 
 /* This function raises the graphics window above the alpha window */
 
-/* Static variables to track last known good window size */
-static unsigned int last_window_width = 0;
-static unsigned int last_window_height = 0;
-
-/* Save current window geometry for next session */
-static void save_window_geometry()
+/* Save current window geometry for next session - public so can be called before exit */
+void m_save_window_geometry()
 {
   char *home;
   char geo_path[512];
@@ -4716,7 +4720,7 @@ void m_graphics_on()
 
   /* Register geometry save on first call */
   if (!geometry_save_registered) {
-    atexit(save_window_geometry);
+    atexit(m_save_window_geometry);
     geometry_save_registered = 1;
   }
 
