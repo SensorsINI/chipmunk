@@ -12206,6 +12206,7 @@ Static Void fitzoom()
   short view_width, view_height;
   short center_x, center_y;
   short zoom_x, zoom_y, new_zoom;
+  short new_zoom_level;  /* Local variable for calculated zoom level */
   short margin = 40;  /* pixels of margin around objects */
   
   /* Get bounding box of all objects on current page */
@@ -12262,18 +12263,24 @@ Static Void fitzoom()
   /* zoomscales array has 5 elements: {2, 3, 5, 8, 12} for indices 0-4 */
   /* zoom index -2 to 2 maps to array indices 0 to 4 via zoomscales[zoom+2] */
   if (new_zoom <= 2)
-    zoom = -2;  /* zoomscales[0] = 2 */
+    new_zoom_level = -2;  /* zoomscales[0] = 2 */
   else if (new_zoom <= 3)
-    zoom = -1;  /* zoomscales[1] = 3 */
+    new_zoom_level = -1;  /* zoomscales[1] = 3 */
   else if (new_zoom <= 5)
-    zoom = 0;   /* zoomscales[2] = 5 */
+    new_zoom_level = 0;   /* zoomscales[2] = 5 */
   else if (new_zoom <= 8)
-    zoom = 1;   /* zoomscales[3] = 8 */
+    new_zoom_level = 1;   /* zoomscales[3] = 8 */
   else
-    zoom = 2;   /* zoomscales[4] = 12 */
+    new_zoom_level = 2;   /* zoomscales[4] = 12 */
   
   /* Apply the zoom level */
-  setscale(zoom);
+  setscale(new_zoom_level);
+  
+  /* Safety check: ensure gg.scale is valid */
+  if (gg.scale <= 0) {
+    /* Fallback to default zoom if something went wrong */
+    setscale(0);
+  }
   
   /* Center the view on the objects */
   /* xoff/yoff are in screen pixels, representing offset from origin */
