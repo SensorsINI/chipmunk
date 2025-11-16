@@ -12258,20 +12258,19 @@ Static Void fitzoom()
   /* Use the smaller zoom to ensure everything fits */
   new_zoom = (zoom_x < zoom_y) ? zoom_x : zoom_y;
   
-  /* Clamp zoom to valid range (zoom index -2 to 3) */
-  /* zoomscales are: 1, 2, 4, 8, 16, 32 for indices -2,-1,0,1,2,3 */
-  if (new_zoom <= 1)
-    zoom = -2;
-  else if (new_zoom <= 2)
-    zoom = -1;
-  else if (new_zoom <= 4)
-    zoom = 0;
+  /* Clamp zoom to valid range (zoom index -2 to 2) */
+  /* zoomscales array has 5 elements: {2, 3, 5, 8, 12} for indices 0-4 */
+  /* zoom index -2 to 2 maps to array indices 0 to 4 via zoomscales[zoom+2] */
+  if (new_zoom <= 2)
+    zoom = -2;  /* zoomscales[0] = 2 */
+  else if (new_zoom <= 3)
+    zoom = -1;  /* zoomscales[1] = 3 */
+  else if (new_zoom <= 5)
+    zoom = 0;   /* zoomscales[2] = 5 */
   else if (new_zoom <= 8)
-    zoom = 1;
-  else if (new_zoom <= 16)
-    zoom = 2;
+    zoom = 1;   /* zoomscales[3] = 8 */
   else
-    zoom = 3;
+    zoom = 2;   /* zoomscales[4] = 12 */
   
   /* Apply the zoom level */
   setscale(zoom);
