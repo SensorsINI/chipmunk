@@ -41,4 +41,7 @@ macro  (  color 0 120 120 120
 macro  )  color 0 140 140 140
 macro  _  color 0 160 160 160
 
+{ Fit and zoom all objects to window }
+macro  F  FIT
+
 

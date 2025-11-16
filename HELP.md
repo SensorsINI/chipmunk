@@ -36,6 +36,7 @@
 - **`<`** / **`>`**: Zoom out / Zoom in
 - **Arrow keys**: Scroll the schematic
 - **`h`**: Home (return to origin and reset zoom to default)
+- **`F`**: Fit - automatically zoom and center all objects to fill the window
 - **`G`**: Toggle grid display
 - **`A`**: Auto-window mode (toggles automatic window raising for small screens; does NOT fit circuit to screen)
 
@@ -51,7 +52,7 @@
 ### Simulation
 - **`s`**: Open Scope screen
 - **`0`** or **`R`**: Reset simulator (time=0)
-- **`f`**: Fast mode
+- **`f`**: Fast mode (speeds up simulation)
 
 ### Getting Help
 - **`?`**: Open this help (or press HELP button)

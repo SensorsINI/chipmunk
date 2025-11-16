@@ -12192,6 +12192,93 @@ Static Void closevert()
 
 
 
+/*==================  FITZOOM  ===================*/
+/*=                                              =*/
+/*=  Fit and zoom all objects to fill the        =*/
+/*=  window optimally.                           =*/
+/*=                                              =*/
+/*================================================*/
+
+Static Void fitzoom()
+{
+  short x1, y1, x2, y2;
+  short obj_width, obj_height;
+  short view_width, view_height;
+  short center_x, center_y;
+  short zoom_x, zoom_y, new_zoom;
+  short margin = 40;  /* pixels of margin around objects */
+  
+  /* Get bounding box of all objects on current page */
+  if (!pagembb((int)gg.curpage, &x1, &y1, &x2, &y2)) {
+    /* Empty page - center at origin with default zoom */
+    gg.xoff = origin - across / 2;
+    gg.yoff = origin - baseline / 2;
+    setscale(0);
+    refrscreen();
+    return;
+  }
+  
+  /* Calculate object dimensions in circuit coordinates */
+  obj_width = x2 - x1;
+  obj_height = y2 - y1;
+  
+  /* Calculate available view area */
+  view_width = across - 2 * margin;
+  view_height = baseline - 2 * margin;
+  
+  /* Calculate center of objects */
+  center_x = (x1 + x2) / 2;
+  center_y = (y1 + y2) / 2;
+  
+  /* Calculate zoom levels that would fit width and height */
+  /* zoom_x and zoom_y are the scale factors needed */
+  if (obj_width > 0)
+    zoom_x = (view_width * log_scale0) / obj_width;
+  else
+    zoom_x = log_scale0;
+    
+  if (obj_height > 0)
+    zoom_y = (view_height * log_scale0) / obj_height;
+  else
+    zoom_y = log_scale0;
+  
+  /* Use the smaller zoom to ensure everything fits */
+  new_zoom = (zoom_x < zoom_y) ? zoom_x : zoom_y;
+  
+  /* Clamp zoom to valid range (zoom index -2 to 3) */
+  /* zoomscales are: 1, 2, 4, 8, 16, 32 for indices -2,-1,0,1,2,3 */
+  if (new_zoom <= 1)
+    zoom = -2;
+  else if (new_zoom <= 2)
+    zoom = -1;
+  else if (new_zoom <= 4)
+    zoom = 0;
+  else if (new_zoom <= 8)
+    zoom = 1;
+  else if (new_zoom <= 16)
+    zoom = 2;
+  else
+    zoom = 3;
+  
+  /* Apply the zoom level */
+  setscale(zoom);
+  
+  /* Center the view on the objects */
+  /* xoff/yoff are in screen pixels, representing offset from origin */
+  gg.xoff = center_x * gg.scale / log_scale0 - across / 2;
+  gg.yoff = center_y * gg.scale / log_scale0 - baseline / 2;
+  
+  /* Reset scroll offsets */
+  xoff0 = 0;
+  yoff0 = 0;
+  
+  /* Refresh the display */
+  refrscreen();
+}
+
+
+
+
 Static Void centercommand()
 {
   log_grec *g;
@@ -20705,7 +20792,10 @@ Static Void dofunction()
 	closevert();
       else if (!strcmp(gg.func, "CENTER"))
 	centercommand();
-      else if (!strcmp(gg.func, "YARDSTICK"))
+      else if (!strcmp(gg.func, "FIT")) {
+	fitzoom();
+	clearfunc();
+      } else if (!strcmp(gg.func, "YARDSTICK"))
 	yardstickcommand();
       else if (!strcmp(gg.func, "DEFINE"))
 	gatedefinitioncommand();
