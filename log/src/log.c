@@ -12263,23 +12263,27 @@ Static Void fitzoom()
   
   /* Pick the closest available zoom level that will fit everything */
   /* zoomscales array: {1, 2, 3, 5, 8, 12, 20} for zoom indices -3, -2, -1, 0, 1, 2, 3 */
-  /* Larger scale = more zoomed in. Pick the largest scale that is <= calculated zoom */
-  /* If calculated zoom is less than 1 (minimum), use 1 */
-  /* If calculated zoom is greater than 20 (maximum), use 20 */
-  if (new_zoom >= 20)
-    new_zoom_level = 3;   /* scale 20 */
-  else if (new_zoom >= 12)
-    new_zoom_level = 2;   /* scale 12 */
-  else if (new_zoom >= 8)
-    new_zoom_level = 1;   /* scale 8 */
-  else if (new_zoom >= 5)
-    new_zoom_level = 0;   /* scale 5 (default) */
-  else if (new_zoom >= 3)
-    new_zoom_level = -1;  /* scale 3 */
-  else if (new_zoom >= 2)
-    new_zoom_level = -2;  /* scale 2 */
-  else
+  /* new_zoom is the scale needed to perfectly fit with margin. */
+  /* Pick scale that's safely smaller to ensure good margins after discretization */
+  /* Use scale that's at most 80% of calculated to leave breathing room */
+  short safe_zoom = (new_zoom * 8) / 10;  /* 80% of calculated zoom */
+  
+  if (safe_zoom <= 1)
     new_zoom_level = -3;  /* scale 1 (most zoomed out) */
+  else if (safe_zoom <= 2)
+    new_zoom_level = -2;  /* scale 2 */
+  else if (safe_zoom <= 3)
+    new_zoom_level = -1;  /* scale 3 */
+  else if (safe_zoom <= 5)
+    new_zoom_level = 0;   /* scale 5 (default) */
+  else if (safe_zoom <= 8)
+    new_zoom_level = 1;   /* scale 8 */
+  else if (safe_zoom <= 12)
+    new_zoom_level = 2;   /* scale 12 */
+  else if (safe_zoom <= 20)
+    new_zoom_level = 3;   /* scale 20 */
+  else
+    new_zoom_level = 1;   /* scale 8 - when very zoomed, stay conservative */
   
   /* Apply the zoom level */
   setscale(new_zoom_level);
@@ -22622,6 +22626,14 @@ int main(int argc, Char * argv[])
 	  rabtime = timers_sysclock();
 	  if (displaynews)
 	    shownews();
+	  
+	  /* Auto-fit on first display after circuit is loaded */
+	  static boolean first_display = true;
+	  if (first_display && gg.incircuit) {
+	    first_display = false;
+	    fitzoom();
+	  }
+	  
 	  if (*gg.func == '\0') {
 	    do {
 	      if (refrtimer == 0 && !gg.startpoint) {
