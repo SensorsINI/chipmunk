@@ -3,6 +3,100 @@
 
 /* #define ENABLE_DEBUGGING */
 
+/*
+ * ============================================================================
+ * X11 EVENT HANDLING AND WINDOW MANAGEMENT DOCUMENTATION
+ * ============================================================================
+ *
+ * KEY INPUT FUNCTIONS:
+ * -------------------
+ * - m_inkey(): Blocking keyboard input, returns one character
+ * - m_inkeyn(): Non-blocking keyboard input (returns immediately)
+ * - m_testkey(): Peeks at keyboard without consuming the character
+ * - m_pollkbd(): Checks if keyboard input is available (non-blocking)
+ *
+ * All of these functions:
+ * - Process X11 KeyPress events
+ * - Handle ConfigureNotify events (window resize)
+ * - Map Escape key (XK_Escape, ASCII 27) to '\003' (Ctrl-C) for mode exit
+ * - Map Ctrl+C to '\003' for consistency
+ * - Update window dimensions when resized via update_window_size()
+ *
+ * MOUSE/PEN INPUT:
+ * ---------------
+ * - m_readpen(pen): Gets mouse position and button state
+ *   - pen->x, pen->y: Mouse coordinates in pixels
+ *   - pen->dn: True if left button is down
+ *   - pen->depressed: True while button held
+ *   - pen->near_: True if mouse is near previous position
+ *   - pen->moving: True if mouse moved since last call
+ *   - pen->off: True if mouse is outside window
+ *
+ * FOCUS MANAGEMENT:
+ * ----------------
+ * - FocusIn events set ignore_next_left_click flag
+ * - First left-click after gaining focus is ignored to prevent accidental actions
+ * - This prevents unintended wire-drawing when clicking to bring window into focus
+ *
+ * WINDOW GEOMETRY PERSISTENCE:
+ * ---------------------------
+ * Window size is saved to ~/.chipmunk_geometry and restored on next launch:
+ * - Format: "WIDTHxHEIGHT+XPOS+YPOS" (standard X11 geometry string)
+ * - Saved on normal exit via m_save_window_geometry()
+ * - Loaded at startup in WindowInitialize()
+ * - Default size: 1280x960+0+0 (if no saved geometry exists)
+ * - Size is clamped to reasonable range (400x300 minimum, screen size maximum)
+ *
+ * X11 EVENT MASKS:
+ * ---------------
+ * Window listens for these X11 events (WindowEventMask):
+ * - KeyPressMask: Keyboard input
+ * - ButtonPressMask, ButtonReleaseMask: Mouse button clicks
+ * - PointerMotionMask: Mouse movement
+ * - ExposureMask: Window redraw requests
+ * - StructureNotifyMask: Window resize/move (ConfigureNotify)
+ * - FocusChangeMask: Window focus in/out (for click-to-focus handling)
+ *
+ * KEY VARIABLES:
+ * -------------
+ * - m_display: X11 display connection
+ * - m_window: Main application window handle
+ * - m_across, m_down: Current window dimensions in pixels
+ * - last_window_width, last_window_height: Saved dimensions for persistence
+ * - ignore_next_left_click: Flag to ignore first click after focus (static in m_readpen)
+ *
+ * WINDOW RESIZE HANDLING:
+ * ----------------------
+ * When ConfigureNotify event is received:
+ * 1. update_window_size() is called to update m_across, m_down
+ * 2. last_window_width, last_window_height are updated for saving
+ * 3. Application (log.c) receives notification via special return values
+ * 4. Application can adjust viewport and redraw as needed
+ *
+ * KEYBOARD EVENT MAPPING:
+ * ----------------------
+ * Special keys are mapped for consistency:
+ * - XK_Escape (key symbol 65307) → '\003' (ASCII 3, Ctrl-C/EXEC)
+ * - Ctrl+C (ControlMask + 'c') → '\003'
+ * - Allows both Escape and Ctrl-C to exit modes consistently
+ *
+ * DEBUG SUPPORT:
+ * -------------
+ * Set environment variables for debugging:
+ * - CHIPMUNK_DEBUG_ESC=1: Enables debug logging for Escape/Ctrl-C detection
+ * - CHIPMUNK_DEBUG_ESC_FILE=/path: Redirects debug to file instead of stderr
+ * - Debug output shows key events, focus changes, and button presses
+ *
+ * IMPORTANT NOTES:
+ * ---------------
+ * - X11 coordinates have origin (0,0) at top-left corner
+ * - Circuit coordinates (in log.c) use different origin (16384)
+ * - Coordinate conversion happens in log.c, not in mylib.c
+ * - This file only deals with raw X11 pixel coordinates
+ *
+ * ============================================================================
+ */
+
 /* Trying to speed up graphics */
 #define SAVECURSOR
 #undef EXTRA_BUFFERING

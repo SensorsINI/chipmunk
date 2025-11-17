@@ -24,7 +24,82 @@ You should have received a copy of the GNU General Public License
 along with this program; see the file COPYING.  If not, write to
 the Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
-
+/*
+ * ============================================================================
+ * COORDINATE SYSTEM AND ZOOM DOCUMENTATION
+ * ============================================================================
+ *
+ * CIRCUIT COORDINATES:
+ * -------------------
+ * - Circuit elements (gates, wires) are positioned in "circuit coordinates"
+ * - Origin is at 16384 (defined as 'origin' constant in this file)
+ * - Circuit coordinates are integers, typically ranging from 0 to ~32768
+ * - All objects snap to a grid for precise alignment
+ *
+ * SCREEN COORDINATES:
+ * ------------------
+ * - Window size is defined by 'across' (width) and 'baseline' (height) in pixels
+ * - Default window size: 1280x960 (can be customized via ~/.chipmunk_geometry)
+ * - Screen coordinates start at (0,0) in top-left corner
+ *
+ * VIEWPORT TO CIRCUIT MAPPING:
+ * ---------------------------
+ * The viewport shows a window into the circuit coordinate space. The mapping is:
+ *
+ *   circuit_x = (screen_x + gg.xoff) / gg.scale * log_scale0 / gg.scale
+ *   
+ * Simplified (as used in refresh() at line ~4614):
+ *   circuit_x = gg.xoff / gg.scale
+ *   circuit_x_max = (gg.xoff + across) / gg.scale
+ *
+ * KEY VIEWPORT VARIABLES:
+ * ----------------------
+ * - gg.xoff, gg.yoff: Viewport offset in scaled units (NOT pixels, NOT circuit coords)
+ *                     These define what circuit coordinate appears at the left/top edge
+ * - gg.scale: Current zoom scale factor (from zoomscales array)
+ * - zoom: Current zoom level index (-3 to +3, maps to scale via zoomscales[zoom+3])
+ * - across, baseline: Window size in pixels
+ * - xoff0, yoff0: Scroll offsets for smooth panning
+ *
+ * ZOOM SYSTEM:
+ * -----------
+ * Available zoom levels (as of 2025):
+ *   zoom = -3 → scale = 1  (most zoomed out, see 5x more area)
+ *   zoom = -2 → scale = 2
+ *   zoom = -1 → scale = 3
+ *   zoom =  0 → scale = 5  (DEFAULT, log_scale0 = 5)
+ *   zoom = +1 → scale = 8
+ *   zoom = +2 → scale = 12
+ *   zoom = +3 → scale = 20 (most zoomed in, see finest details)
+ *
+ * Larger scale = more zoomed in (objects appear larger)
+ * Formula: object_screen_pixels = (object_circuit_units * scale) / log_scale0
+ *
+ * CENTERING FORMULA:
+ * -----------------
+ * To center viewport on circuit coordinate (center_x, center_y):
+ *   gg.xoff = center_x * gg.scale - across / 2
+ *   gg.yoff = center_y * gg.scale - baseline / 2
+ *
+ * This ensures center_x appears at the horizontal center of the window.
+ *
+ * ZOOM CONTROLS:
+ * -------------
+ * - '<' key: Zoom out (decrease zoom level, decrease scale)
+ * - '>' key: Zoom in (increase zoom level, increase scale)
+ * - 'F' key: Fit and zoom - automatically center and zoom all objects
+ * - 'h' key: Home - return to origin and reset zoom to default (zoom=0, scale=5)
+ *
+ * FUNCTIONS TO NOTE:
+ * -----------------
+ * - setscale(zoom_level): Sets zoom and gg.scale from zoom level index
+ * - zoomto(zoom_level): Changes zoom and adjusts offsets to maintain center
+ * - fitzoom(): Automatically fits all objects in window (bound to 'F' key)
+ * - refresh(): Redraws circuit, uses xoff/scale to determine visible area
+ * - pagembb(): Computes bounding box of all objects on current page
+ *
+ * ============================================================================
+ */
 
 /*
 
