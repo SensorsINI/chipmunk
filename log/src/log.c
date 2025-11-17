@@ -22659,11 +22659,21 @@ int main(int argc, Char * argv[])
   for (temp1 = 1; temp1 <= maxgatesfiles; temp1++)
     libf1[temp1 - 1] = NULL;
   TRY(try40);
+    /* Print helpful welcome message to terminal BEFORE initializing graphics */
+    fprintf(stderr, "================================================================\n");
+    fprintf(stderr, "  Chipmunk Analog Circuit Simulator - Quick Start\n");
+    fprintf(stderr, "================================================================\n");
+    fprintf(stderr, "  Essential Keys:\n");
+    fprintf(stderr, "    ?  - Help    C - Catalog    c - Configure    d - Delete\n");
+    fprintf(stderr, "    F  - Fit all objects    < > - Zoom    Esc/^C - Exit mode\n");
+    fprintf(stderr, "    s  - Scope   0 - Reset      Space - Refresh\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "  Mouse: Tap to rotate/place, Drag to move, Right-click cancel\n");
+    fprintf(stderr, "  More help: Press ? key or see HELP.md in repo\n");
+    fprintf(stderr, "================================================================\n");
+    fflush(stderr);
+    
     initialize();
-#define HCL_KLUDGE
-#ifdef HCL_KLUDGE
-    printf("\210\f Starting\201\210 LOG\f\200");
-#endif  /* HCL_KLUDGE */
     do {
       gg.initdone = true;
       gg.fastspeed = gg.fastmin;

@@ -4,7 +4,7 @@
 # Version: 6.0.0
 # Base Chipmunk Version: 5.66
 
-.PHONY: all build clean install default help check
+.PHONY: all build clean install default help check bin/diglog
 
 # Sentinel file to track successful requirements check
 REQUIREMENTS_CHECKED := .requirements_checked
