@@ -34,9 +34,14 @@ echo ""
 ERRORS=0
 WARNINGS=0
 
-# Check if running on WSL (Windows Subsystem for Linux)
+# Detect operating system
 IS_WSL=0
-if [ -f /proc/version ] && grep -qi microsoft /proc/version 2>/dev/null; then
+IS_MACOS=0
+OS_TYPE=$(uname -s)
+
+if [ "$OS_TYPE" = "Darwin" ]; then
+    IS_MACOS=1
+elif [ -f /proc/version ] && grep -qi microsoft /proc/version 2>/dev/null; then
     IS_WSL=1
 elif [ -n "$WSL_DISTRO_NAME" ]; then
     IS_WSL=1
@@ -258,8 +263,8 @@ if [ -f "$CHIPMUNK_DIR/bin/analog" ]; then
         ERRORS=$((ERRORS + 1))
     fi
 else
-    echo "   ✗ analog script not found"
-    ERRORS=$((ERRORS + 1))
+    echo "   ⚠ analog script not found (will be created during build)"
+    WARNINGS=$((WARNINGS + 1))
 fi
 
 if [ -f "$CHIPMUNK_DIR/bin/diglog" ]; then
@@ -271,15 +276,29 @@ if [ -f "$CHIPMUNK_DIR/bin/diglog" ]; then
         ERRORS=$((ERRORS + 1))
     fi
 else
-    echo "   ✗ diglog binary not found (run 'make' to build)"
-    ERRORS=$((ERRORS + 1))
+    echo "   ⚠ diglog binary not found (will be built by 'make')"
+    WARNINGS=$((WARNINGS + 1))
 fi
 echo ""
 
-# Check required font packages (Ubuntu/Debian)
+# Check required font packages
 echo "5. Checking font packages..."
 MISSING_FONT_PACKAGES=()
-if command -v dpkg >/dev/null 2>&1; then
+if [ $IS_MACOS -eq 1 ]; then
+    # On macOS, check for XQuartz which provides fonts
+    if [ -d /opt/X11 ]; then
+        echo "   ✓ XQuartz is installed at /opt/X11"
+        echo "   → Fonts are provided by XQuartz"
+    elif [ -d /usr/X11R6 ]; then
+        echo "   ✓ X11 is installed at /usr/X11R6"
+        echo "   → Fonts are provided by X11"
+    else
+        echo "   ✗ XQuartz not found"
+        echo "   → Install XQuartz from: https://www.xquartz.org/"
+        ERRORS=$((ERRORS + 1))
+    fi
+elif command -v dpkg >/dev/null 2>&1; then
+    # On Debian/Ubuntu, check for font packages
     FONT_PACKAGES=("xfonts-base" "xfonts-75dpi" "xfonts-100dpi")
     for pkg in "${FONT_PACKAGES[@]}"; do
         if dpkg -l | grep -q "^ii.*${pkg}"; then
@@ -291,14 +310,25 @@ if command -v dpkg >/dev/null 2>&1; then
         fi
     done
 else
-    echo "   ⚠ Cannot check packages (dpkg not available)"
+    echo "   ⚠ Cannot check packages (package manager not recognized)"
     WARNINGS=$((WARNINGS + 1))
 fi
 echo ""
 
 # Check for conflicting system 'analog' package
 echo "6. Checking for package conflicts..."
-if command -v dpkg >/dev/null 2>&1; then
+if [ $IS_MACOS -eq 1 ]; then
+    # On macOS, check for Homebrew analog package
+    if command -v brew >/dev/null 2>&1 && brew list analog 2>/dev/null >/dev/null; then
+        echo "   ⚠ WARNING: Homebrew 'analog' package is installed"
+        echo "      This is a web server log analyzer (analog.cx), NOT Chipmunk's analog tool."
+        echo "      It will conflict with Chipmunk's analog command if both are in PATH."
+        echo "      Consider removing it: brew uninstall analog"
+        WARNINGS=$((WARNINGS + 1))
+    else
+        echo "   ✓ No conflicting 'analog' package found"
+    fi
+elif command -v dpkg >/dev/null 2>&1; then
     if dpkg -l | grep -q "^ii.*analog[[:space:]]"; then
         echo "   ⚠ WARNING: System 'analog' package is installed"
         echo "      This is a web server log analyzer (analog.cx), NOT Chipmunk's analog tool."
@@ -309,8 +339,7 @@ if command -v dpkg >/dev/null 2>&1; then
         echo "   ✓ No conflicting 'analog' package found"
     fi
 else
-    echo "   ⚠ Cannot check for conflicts (dpkg not available)"
-    WARNINGS=$((WARNINGS + 1))
+    echo "   ✓ No package manager conflicts to check"
 fi
 echo ""
 
