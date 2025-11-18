@@ -8,19 +8,21 @@ However, **analog** in particular is great for getting intuiion by playing. The 
 
 ## Quick Start
 
-### For Ubuntu/WSL2 Users
+### Recommended: Use the Latest Release
 
-1. **Install dependencies:**
+Download the latest pre-built release from [GitHub Releases](https://github.com/sensorsINI/chipmunk/releases):
+
+1. **Download and extract the latest release:**
    ```bash
-   sudo apt-get install gcc make libx11-dev xfonts-base xfonts-75dpi xfonts-100dpi
-   xset fp rehash
+   wget https://github.com/sensorsINI/chipmunk/releases/latest/download/chipmunk-linux-x86_64.tar.gz
+   tar -xzf chipmunk-linux-x86_64.tar.gz
+   cd chipmunk
    ```
 
-2. **Clone and build:**
+2. **Install required X11 fonts** (if not already installed):
    ```bash
-   git clone https://github.com/sensorsINI/chipmunk.git
-   cd chipmunk
-   make build
+   sudo apt-get install xfonts-base xfonts-75dpi xfonts-100dpi
+   xset fp rehash
    ```
 
 3. **Run the simulator:**
@@ -29,22 +31,30 @@ However, **analog** in particular is great for getting intuiion by playing. The 
    ```
    The tutorial circuit (`lesson1.lgf`) will open automatically for first-time users.
 
-4. **Get help:**
+**Note:** Pre-built binaries are for Linux x86_64. For other platforms, see the developer instructions below.
+
+### For Developers: Build from Source
+
+If you need to customize the build or develop Chipmunk:
+
+1. **Clone the repository:**
    ```bash
-   ./bin/analog --help
+   git clone https://github.com/sensorsINI/chipmunk.git
+   cd chipmunk
    ```
 
-**That's it!** See [Building and Installation](#building-and-installation) for detailed instructions and troubleshooting.
+2. **Build (requirements are checked automatically):**
+   ```bash
+   make
+   ```
+   The build process will automatically check for required dependencies (gcc, make, libx11-dev, X11 fonts) and prompt you to install any missing packages.
 
-### Using Pre-built Binaries (Releases)
+3. **Run the simulator:**
+   ```bash
+   ./bin/analog
+   ```
 
-Pre-built binaries are available in [GitHub Releases](https://github.com/sensorsINI/chipmunk/releases). Download the release archive, extract it, and run:
-
-```bash
-./bin/analog
-```
-
-**Note:** Pre-built binaries are for Linux x86_64. For other platforms or to customize the build, see [Building and Installation](#building-and-installation).
+See [Building and Installation](#building-and-installation) for detailed instructions and troubleshooting.
 
 ## Version
 
