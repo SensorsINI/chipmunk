@@ -17,6 +17,9 @@ log/src/simdir.c
 *.swo
 .DS_Store
 
+# backup schematics
+*.lfo
+
 # Temporary files
 *.tmp
 *.temp
