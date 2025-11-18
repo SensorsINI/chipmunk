@@ -31,7 +31,7 @@ Download the latest pre-built release from [GitHub Releases](https://github.com/
    ```
    The tutorial circuit (`lesson1.lgf`) will open automatically for first-time users.
 
-**Note:** Pre-built binaries are for Linux x86_64. For other platforms, see the developer instructions below.
+**Note:** Pre-built binaries are for Linux x86_64. For macOS (including Apple Silicon), build from source using the developer instructions below.
 
 ### For Developers: Build from Source
 
@@ -90,25 +90,40 @@ This repository includes the following modifications:
 
 - **Wrapper Scripts**: Added wrapper scripts (`analog`, `diglog-wrapper`) that automatically set the `LOGLIB` environment variable to ensure proper configuration file discovery
 - **Build Fixes**: Compiled and tested on modern Linux systems with X11
+- **macOS Support**: Full build system support for macOS (including Apple Silicon), with automatic XQuartz detection and platform-specific compiler configuration
 
 ## Building and Installation
 
 ### Prerequisites
 
+**Linux (Ubuntu/Debian/WSL2):**
 - ANSI C compiler (typically GCC)
-- X11 (R4, R5, or R6)
+- X11 development libraries (`libx11-dev`)
 - **X11 fonts: `xfonts-base`, `xfonts-75dpi`, `xfonts-100dpi`** (required - see Installation Steps)
   - These packages provide the `6x10` and `8x13` fonts that Chipmunk requires
   - Without these fonts, the program will fail with X11 font errors
 
+**macOS:**
+- GCC compiler (`brew install gcc`)
+- **XQuartz** (X11 server for macOS) - provides X11 headers, libraries, and required fonts
+  - Download from https://www.xquartz.org/ or install via Homebrew: `brew install --cask xquartz`
+  - Includes the required `6x10` and `8x13` fonts automatically
+  - Supports both Intel and Apple Silicon Macs
+
 ### Installation Steps
 
-1. **Install required X11 fonts** (required for Ubuntu/WSL2):
+#### Linux (Ubuntu/Debian/WSL2)
+
+1. **Install required dependencies**:
    ```bash
+   # Install X11 development libraries
+   sudo apt-get install libx11-dev gcc build-essential
+
+   # Install required X11 fonts
    sudo apt-get install xfonts-base xfonts-75dpi xfonts-100dpi
    xset fp rehash
    ```
-   
+
    **Important**: The Chipmunk tools require the X11 fonts `6x10` and `8x13`. These fonts are provided by the packages above. Without them, you will see errors like:
    ```
    X Error of failed request: BadName (named color or font does not exist)
@@ -119,16 +134,10 @@ This repository includes the following modifications:
    ```bash
    ./check_requirements.sh
    ```
-   This script checks for fonts, X11 display, and other requirements.
 
 3. **Build the tools**:
    ```bash
    make
-   ```
-   Or build manually:
-   ```bash
-   cd psys/src && make install
-   cd ../../log/src && make install
    ```
 
 4. **Run the analog simulator**:
@@ -136,7 +145,41 @@ This repository includes the following modifications:
    ./bin/analog
    ```
 
-The wrapper scripts automatically configure the `LOGLIB` environment variable and load the appropriate configuration file (`analog.cnf` for analog mode).
+#### macOS
+
+1. **Install XQuartz and GCC**:
+   ```bash
+   # Install XQuartz (provides X11 server, headers, libraries, and fonts)
+   brew install --cask xquartz
+
+   # Install GCC compiler
+   brew install gcc
+   ```
+
+   **Note**: After installing XQuartz, you may need to log out and log back in for X11 to work properly.
+
+2. **Verify requirements** (optional but recommended):
+   ```bash
+   ./check_requirements.sh
+   ```
+   This script will verify XQuartz installation and check for required components.
+
+3. **Build the tools**:
+   ```bash
+   make
+   ```
+   The build system automatically detects macOS and configures XQuartz paths.
+
+4. **Run the analog simulator**:
+   ```bash
+   ./bin/analog
+   ```
+
+**Platform Notes**:
+- The build system automatically detects your platform (Linux vs macOS) and configures appropriate paths
+- On macOS, the Makefile automatically detects XQuartz at `/opt/X11` (modern) or `/usr/X11R6` (legacy)
+- Supports both Intel and Apple Silicon Macs with native 64-bit binaries
+- The wrapper scripts automatically configure the `LOGLIB` environment variable and load the appropriate configuration file (`analog.cnf` for analog mode)
 
 ## Configuration Files
 

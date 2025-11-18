@@ -47,3 +47,5 @@ test_crash_handler
 /tmp/chipmunk-crash-test.log
 .requirements_checked
 RELEASE_v*
+
+.github/drafts
