@@ -1310,19 +1310,17 @@ long a, b;
 
 /* Quick-sort */
 
-static int (*userqsortfunc)();
+static int (*userqsortfunc)(long, long, ...);
 static Anyptr userqsortlink;
 
-static int qsortfunc(a, b)
-long *a, *b;
+static int qsortfunc(const void *a, const void *b)
 {
-    return (*userqsortfunc)(*a, *b);
+    return (*userqsortfunc)(*(const long *)a, *(const long *)b);
 }
 
-static int qsortfunc2(a, b)
-long *a, *b;
+static int qsortfunc2(const void *a, const void *b)
 {
-    return (*userqsortfunc)(*a, *b, userqsortlink);
+    return (*userqsortfunc)(*(const long *)a, *(const long *)b, userqsortlink);
 }
 
 Void na_qsort(a, n, comp)
@@ -1330,22 +1328,22 @@ na_long *a;
 long n;
 _PROCEDURE comp;
 {
-    if (comp.link) 
+    if (comp.link)
       {
-        userqsortfunc = (int (*)())comp.proc;
+        userqsortfunc = (int (*)(long, long, ...))comp.proc;
         userqsortlink = comp.link;
 
 #ifndef OS2
-	qsort(a, n, 4, (int (*)())qsortfunc2);
+	qsort(a, n, 4, qsortfunc2);
 #endif
 
       }
-     else 
+     else
        {
-	 userqsortfunc = (int (*)())comp.proc;
+	 userqsortfunc = (int (*)(long, long, ...))comp.proc;
 
 #ifndef OS2
-	 qsort(a, n, 4, (int (*)())qsortfunc);
+	 qsort(a, n, 4, qsortfunc);
 #endif
 	 
        }

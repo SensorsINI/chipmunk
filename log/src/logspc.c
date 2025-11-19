@@ -139,7 +139,7 @@ char	pre_file[256] = "", post_file[256] = ""; /* for #include-esque stuff */
 
 extern double AnaVdd;
 
-char *my_strdup();
+char *my_strdup(char *s);
 #undef strdup
 #define strdup my_strdup
 

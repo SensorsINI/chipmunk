@@ -43,7 +43,7 @@ the Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 #include "logsimh.h"
 
 
-char *my_strdup();
+char *my_strdup(char *s);
 #undef strdup
 #define strdup my_strdup
 

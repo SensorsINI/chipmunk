@@ -179,7 +179,7 @@ extern long m_curcolormode PV();
 extern void m_setpattern();
 extern void m_seepattern();
 extern void m_scanpos();
-extern void m_setcolor();
+extern void m_setcolor(int c, int r, int g, int b);
 extern void m_seecolor PP((int, int *, int *, int *));
 extern void m_setcolors PP((m_colorarray, m_colorarray, m_colorarray));
 extern void m_seecolors PP((m_colorarray, m_colorarray, m_colorarray));
@@ -229,7 +229,7 @@ extern void m_bezier PP((int, int, int, int, int, int, int, int));
 extern void m_bezier2 PP((int, int, int, int, int, int, int, int, int));
 extern void m_cbezier PP((int, int, int, int, int, int, int, int, int));
 extern void m_polycurve PP((double, double, double, double, double, double, double, double, double, double, double, double));
-extern void m_drawarrow();
+extern void m_drawarrow(long x1, long y1, long x2, long y2, long a, long b);
 extern void m_fillarrow();
 extern void m_drawpoly PP((int, int [], int []));
 extern void m_fillpoly PP((int, int [], int []));
@@ -253,22 +253,22 @@ extern void m_putcpicture2();
 extern void m_xorcpicture();
 extern void m_setcpicture();
 extern void m_disposepicture();
-extern void m_bunny();
+extern void m_bunny(int x, int y);
 extern void m_hscroll();
 extern void m_vscroll();
 extern void m_blit();
 extern void m_loadfont();
-extern void m_drawchar();
-extern void m_displaytext();
+extern void m_drawchar(Anyptr *cp);
+extern void m_displaytext(char *str);
 extern void m_drawstr PP((int, int, char *, char *));
 extern void m_centerstr PP((int, int, char *, char *));
 extern void m_rightstr PP((int, int, char *, char *));
 extern long m_strwidth PP((char *, char *));
 extern long m_strlength();
-extern void m_setfont();
+extern void m_setfont(void *font);
 #define m_choosefont(x)
 /*  extern void m_choosefont();  */
-extern void m_seefont();
+extern void m_seefont(void *font);
 extern void m_makechar PP((Anyptr *, long, long, long, long, long, long));
 extern void m_changechar PP((Anyptr *, long, long, long, long, long));
 extern void m_copychar();
@@ -290,9 +290,9 @@ extern void m_save_window_geometry();
 #define m_graphics_off()
 #define m_alpha_off()
 
-extern void m_readpen();
-extern void m_trackpen();
-extern void m_waitpen();
+extern void m_readpen(m_tablet_info *pen);
+extern void m_trackpen(m_tablet_info *pen);
+extern void m_waitpen(m_tablet_info *pen);
 extern void m_clipxy();
 extern boolean m_pollkbd();
 extern uchar m_inkey();
