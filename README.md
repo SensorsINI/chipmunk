@@ -58,7 +58,7 @@ See [Building and Installation](#building-and-installation) for detailed instruc
 
 ## Version
 
-- **This Repository Version**: 6.1.0
+- **This Repository Version**: 6.2.0
 - **Base Chipmunk/LOG Version**: 5.66
 - **SPICE Converter Version**: 1.0 Beta
 
