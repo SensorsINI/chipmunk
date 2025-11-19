@@ -39,13 +39,21 @@ LOCINC = ../../../psys/include
 ## XINCLUDEDIR = /usr/X11/include
 ##
 ## For OS X, this usually works:
-## 
+##
 ## XINCLUDEDIR = /usr/X11R6/include
 ##
 ## For most versions of UNIX, one of the above directories
 ## will be the correct one to use on the line below:
 
-XINCLUDEDIR = .
+# Detect macOS and set X11 paths accordingly
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  # macOS: Use XQuartz paths
+  XINCLUDEDIR = /opt/X11/include
+else
+  # Linux/Other: Use default
+  XINCLUDEDIR = .
+endif
 
 ##
 ##  (1) Choosing your compiler
@@ -63,13 +71,15 @@ XINCLUDEDIR = .
 ## Note: -Wno-format-overflow and -Wno-stringop-overflow suppress warnings from
 ## legacy 1980s code. These warnings are expected and would require extensive
 ## code refactoring to fix, which is not practical for this historical codebase.
-##
-  
 
-CHIPMUNKCC = gcc -g -Wno-format-overflow -Wno-stringop-overflow
+# Use GCC with warning suppression
+# Note: CC comes from environment (e.g., CC=/opt/homebrew/bin/gcc-<version>)
+# Use := for immediate expansion to capture the environment CC before we override it
+BASE_CC := $(CC)
+CHIPMUNKCC = $(BASE_CC) -g -Wno-format-overflow -Wno-stringop-overflow
 
-
-CC = $(CHIPMUNKCC) 
+# Use CHIPMUNKCC for compilation (inherits CC from environment)
+CC = $(CHIPMUNKCC)
 
 ##
 ## (4) Adding appropriate flags
@@ -77,24 +87,24 @@ CC = $(CHIPMUNKCC)
 ##
 ## Add these flags to the CHIPMUNKFLAGS below:
 ##
-## Linux/86                     -m32 -DBSD -Dlinux -DF_OK=0 
-## Apple OS X                   -m32 -DBSD -Dlinux -Dfreebsd 
-## FreeBSD                      -m32 -DBSD -Dfreebsd -Dlinux -DF_OK=0 
+## Linux/86                     -m32 -DBSD -Dlinux -DF_OK=0
+## Apple OS X                   -m32 -DBSD -Dlinux -Dfreebsd
+## FreeBSD                      -m32 -DBSD -Dfreebsd -Dlinux -DF_OK=0
 ##
 ## The platforms below are legacy, these flags may no longer be sufficient.
 ##
-## Solaris 2.X                      -Daux 
+## Solaris 2.X                      -Daux
 ## DEC Alpha (Linux or OSF)         -DBSD -Dlinux -DF_OK=0 -D__GCC__
 ## HP series 800 (gcc)
 ## HP series 800 (cc)               -w -Aa -D_HPUX_SOURCE -DF_OK=0
 ## FreeBSD                          -DBSD -Dfreebsd -Dlinux -DF_OK=0 -m486
-## SGI Irix 5.2/5,3                 -ansi -Wf -XNd10000 
+## SGI Irix 5.2/5,3                 -ansi -Wf -XNd10000
 ##                                   (if   -Wf -XNd10000 isn't supported by
 ##                                    your compiler, delete them)
-## Solaris 1.X (SunOS)              
-## IBM RS/6000 (xlc)                -DBSD=0 -Drs6000 
+## Solaris 1.X (SunOS)
+## IBM RS/6000 (xlc)                -DBSD=0 -Drs6000
 ## Apple AU/X                       -Daux
-## Apple MachTen                    -DBSD -DF_OK=0  
+## Apple MachTen                    -DBSD -DF_OK=0
 ## AmigaOS (gcc)                    -ansi -DBSD -DF_OK=0
 ##
 ##
@@ -107,9 +117,17 @@ CC = $(CHIPMUNKCC)
 ##   -m68030              : for 68030
 ##   -m68030 -m68881      : for 68030+6888x
 ##   -m68040              : for 68040 and 68060
-## 
+##
 
-CHIPMUNKFLAGS = -m64 -DBSD -Dlinux -DF_OK=0 -D__alpha__
+ifeq ($(UNAME_S),Darwin)
+  # macOS: Modern macOS only supports 64-bit, using freebsd compatibility flags
+  # Note: -D__alpha__ is REQUIRED to ensure filerec union uses int[64] (256 bytes)
+  # instead of long[64] (512 bytes), matching the binary .gate file format
+  CHIPMUNKFLAGS = -m64 -DBSD -Dlinux -Dfreebsd -D__alpha__
+else
+  # Linux: Default to 64-bit Linux/Alpha configuration
+  CHIPMUNKFLAGS = -m64 -DBSD -Dlinux -DF_OK=0 -D__alpha__
+endif
 
 CFLAGS =  $(CHIPMUNKFLAGS) -I$(LOCINC) -I$(XINCLUDEDIR)
 
@@ -120,7 +138,7 @@ GATESOBJ = numbers.o mmeter.o iscope.o \
 	   nfet5.o pfet5.o pfet6.o pspc1.o nspc1.o devtechp.o\
 	   nfet7t.o nfet7f.o pfet7t.o pfet7f.o thermal.o physical.o\
 	   tc.o moscap.o ganglion.o hres.o runspec.o\
-	   npn1.o pnp1.o pnp2.o npn2.o diode1.o pwl.o rtd.o devtechn.o 
+	   npn1.o pnp1.o pnp2.o npn2.o diode1.o pwl.o rtd.o devtechn.o
 
 # Note:  The above list is also present in ../Makefile.
 

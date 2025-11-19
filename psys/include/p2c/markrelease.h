@@ -7,9 +7,10 @@
 # define vextern extern
 #endif
 
-extern void mark();
-extern void release();
-extern char *fakemalloc();
+struct record;
+extern void mark(struct record **state);
+extern void release(struct record **state);
+extern char *fakemalloc(long size);
 
 #define malloc(x) fakemalloc(x)
 

@@ -5811,3 +5811,6 @@ void m_drawchar(cp)
 Anyptr *cp;
 {
 }
+
+
+/* Stub implementations removed - real implementations provided by logstuff.c */
