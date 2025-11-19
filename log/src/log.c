@@ -15586,6 +15586,9 @@ log_grec *g;
 /* p2c: log.text, line 14480: Note: Character >= 128 encountered [281] */
       if (ch == '\007' && *n != '\0')
 	n[strlen(n) - 1] = '\0';
+      /* Handle Delete key (0x05) - same as backspace in this simple input */
+      if (ch == '\005' && *n != '\0')
+	n[strlen(n) - 1] = '\0';
     }
   } while (!((ch < 32 && ((1L << ch) & 0x2008) != 0) || gg.t.dn));
   remcursor();
