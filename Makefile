@@ -174,7 +174,11 @@ uninstall-bashrc:
 # Run check_requirements.sh and create sentinel file on success
 $(REQUIREMENTS_CHECKED):
 	@echo "Checking requirements..."
-	@if ./check_requirements.sh; then \
+	@CHECK_FLAGS=""; \
+	if [ -n "$$CI" ] || [ -n "$$GITHUB_ACTIONS" ]; then \
+		CHECK_FLAGS="--build-only"; \
+	fi; \
+	if ./check_requirements.sh $$CHECK_FLAGS; then \
 		touch $(REQUIREMENTS_CHECKED); \
 		echo ""; \
 		echo "Requirements check passed. Proceeding with build..."; \
