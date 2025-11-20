@@ -17937,19 +17937,28 @@ Char *filename_;
   f = NULL;
   newci_fixfname(filename, "lgf", "");
   
+  /* Debug: Log original filename */
+  fprintf(stderr, "[DEBUG savepage] Original filename: '%s'\n", filename);
+  
   /* If filename is relative (not absolute path), save to launch directory if available */
   /* This ensures saves go to the same place as loads (user's working directory) */
   /* Check for relative path: not starting with /, ~, %, or * */
   if (*filename != '\0' && filename[0] != '/' && filename[0] != '~' && 
       filename[0] != '%' && filename[0] != '*') {
     char *launch_dir = getenv("CHIPMUNK_LAUNCH_DIR");
+    fprintf(stderr, "[DEBUG savepage] CHIPMUNK_LAUNCH_DIR = '%s'\n", 
+	    launch_dir != NULL ? launch_dir : "(null)");
     if (launch_dir != NULL && *launch_dir != '\0') {
       /* Prepend launch directory to relative filename */
       sprintf(STR1, "%s/%s", launch_dir, filename);
       strcpy(filename, STR1);
+      fprintf(stderr, "[DEBUG savepage] After prepending launch_dir: '%s'\n", filename);
     } else {
       /* If CHIPMUNK_LAUNCH_DIR not set, try to use directory of loaded file if available */
+      fprintf(stderr, "[DEBUG savepage] CHIPMUNK_LAUNCH_DIR not set, checking curfilename\n");
       if (curfilename[pgnum - 1] != NULL && *curfilename[pgnum - 1] != '\0') {
+	fprintf(stderr, "[DEBUG savepage] curfilename[%d] = '%s'\n", 
+		pgnum - 1, curfilename[pgnum - 1]);
 	Char *last_slash = strrchr(curfilename[pgnum - 1], '/');
 	if (last_slash != NULL) {
 	  Char savedir[256];
@@ -17958,9 +17967,17 @@ Char *filename_;
 	  savedir[dir_len] = '\0';
 	  sprintf(STR1, "%s/%s", savedir, filename);
 	  strcpy(filename, STR1);
+	  fprintf(stderr, "[DEBUG savepage] After using curfilename dir: '%s'\n", filename);
+	} else {
+	  fprintf(stderr, "[DEBUG savepage] No / in curfilename, using relative path\n");
 	}
+      } else {
+	fprintf(stderr, "[DEBUG savepage] curfilename[%d] is NULL or empty\n", pgnum - 1);
       }
     }
+  } else {
+    fprintf(stderr, "[DEBUG savepage] Filename is absolute or special (starts with '%c'), not modifying\n", 
+	    *filename != '\0' ? filename[0] : '?');
   }
   
   if (*filename != '\0' && pageempty(pgnum) && access(filename, F_OK) == 0) {
@@ -18223,6 +18240,8 @@ Char *filename_;
       update_window_title_with_file(filename);
       save_chipmunk_prefs();
     }
+    /* Show confirmation message with full path */
+    fprintf(stderr, "[DEBUG savepage] Successfully saved to: '%s'\n", filename);
   }
   if (f != NULL)
     fclose(f);
@@ -18257,6 +18276,7 @@ short pgnum;
 Char *fn;
 {
   long i, j;
+  Char saved_path[256];
 
   if (*fn == '\0')
     return;
@@ -18264,7 +18284,16 @@ Char *fn;
   TRY(try26);
     printf("Saving file %s\n", fn);
     m_alpha_on();
+    /* Store the filename before savepage modifies it */
+    strcpy(saved_path, fn);
     savepage(pgnum, fn);
+    /* Get the actual saved path from curfilename (savepage sets it) */
+    if (curfilename[pgnum - 1] != NULL && *curfilename[pgnum - 1] != '\0') {
+      strcpy(saved_path, curfilename[pgnum - 1]);
+    }
+    endbottom();
+    beginbottom();
+    printf("File saved to: %s\n", saved_path);
     endbottom();
   RECOVER(try26);
     i = P_escapecode;
