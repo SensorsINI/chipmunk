@@ -29,6 +29,10 @@ if [ "$1" = "--help" ] || ([ "$1" = "-h" ] && [ -z "$2" ]); then
     exit 0
 fi
 
+# Save the launch directory for relative path resolution in :load commands
+# This allows users to load files relative to where they launched analog
+export CHIPMUNK_LAUNCH_DIR="$(pwd)"
+
 # Process arguments to handle paths correctly
 declare -a ARGS=()
 for arg in "$@"; do

@@ -18750,13 +18750,48 @@ struct LOC_initialize *LINK;
   return Result;
 }
 
+/*
+ * locatefile() - Search for a file in multiple directories
+ * 
+ * Searches for a file in the following order:
+ *   1. Current directory (where program is running from - usually log/lib)
+ *   2. Launch directory (where user started analog from - if CHIPMUNK_LAUNCH_DIR set)
+ *   3. Home directory
+ *   4. LOGLIB directory (usually <chipmunk>/log/lib)
+ * 
+ * The CHIPMUNK_LAUNCH_DIR environment variable is set by the bin/analog wrapper
+ * script to preserve the user's working directory. This allows :load commands
+ * to resolve relative paths from where the user launched the program, not from
+ * the internal working directory (log/lib) that the program changes to.
+ *
+ * Example:
+ *   User launches from ~/chipmunk: ./bin/analog
+ *   User types in console: :load lessons/nfet.lgf
+ *   Without CHIPMUNK_LAUNCH_DIR: looks for ~/chipmunk/log/lib/lessons/nfet.lgf (fails)
+ *   With CHIPMUNK_LAUNCH_DIR: looks for ~/chipmunk/lessons/nfet.lgf (succeeds)
+ */
 Local boolean locatefile(name, LINK)
 Char *name;
 struct LOC_initialize *LINK;
 {
   Char path[256];
+  Char launchdir[256];
+  char *launch_env;
 
   sprintf(path, "%s/", GetChipmunkPath("LOGLIB", LOGLIB));
+  
+  /* Check if CHIPMUNK_LAUNCH_DIR is set (from wrapper script) */
+  launch_env = getenv("CHIPMUNK_LAUNCH_DIR");
+  if (launch_env != NULL && *launch_env != '\0') {
+    sprintf(launchdir, "%s/", launch_env);
+    /* Search order: current dir, launch dir, home dir, LOGLIB */
+    return (tryfindfile(name, "", LINK) ||
+	    tryfindfile(name, launchdir, LINK) ||
+	    tryfindfile(name, gg.homedirname, LINK) ||
+	    tryfindfile(name, path, LINK));
+  }
+  
+  /* Fallback if CHIPMUNK_LAUNCH_DIR not set */
   return (tryfindfile(name, "", LINK) ||
 	  tryfindfile(name, gg.homedirname, LINK) ||
 	  tryfindfile(name, path, LINK));
@@ -19331,8 +19366,16 @@ Static Void loadcommand()
       beginerror();
       if (Debugging || debugprint || gg.traceflag)
 	printf("%d/%d/%ld  ", i, j, EXCP_LINE);
-      if (i == -10 && (unsigned)j < 32 && ((1L << j) & 0x600) != 0)
+      if (i == -10 && (unsigned)j < 32 && ((1L << j) & 0x600) != 0) {
+	char *launch_dir = getenv("CHIPMUNK_LAUNCH_DIR");
 	printf("Can't find file \"%s\"\n", filename);
+	if (launch_dir != NULL && *launch_dir != '\0') {
+	  printf("  (searched in: launch dir, current dir, home dir, LOGLIB)\n");
+	  printf("  Launch directory was: %s\n", launch_dir);
+	} else {
+	  printf("  (searched in: current dir, home dir, LOGLIB)\n");
+	}
+      }
       else if (i == -20)
 	printf("STOP key pressed while loading file.\n");
       else if (i > 0)
