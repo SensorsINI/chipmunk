@@ -2,9 +2,9 @@
 
 ![Analog Circuit Simulator](docs/analog.png)
 
-This repository contains the Chipmunk system tools, originally developed by Dave Gillespie, John Lazzaro, and others.  Although most of the Carvrland Physics of Comptation Lab chips were designed using these tools, they are no longer useful for chip design. 
+This repository contains the Chipmunk system tools, originally developed by Dave Gillespie, John Lazzaro, and others.  Although most of the Carvrland Physics of Computation Lab chips were designed using these tools, they are no longer useful for chip design. 
 
-However, **analog** in particular is great for getting intuiion by playing. The simulation runs like a circuit on a bench. As soon as the circuit is valid, it starts simulating.
+However, **analog** in particular is great for getting intuition by playing. The simulation runs like a circuit on a bench. As soon as the circuit is valid, it starts simulating.
 
 ## Quick Start
 

@@ -4,17 +4,22 @@
 
 # Parse command line arguments
 AUTO_YES=0
+BUILD_ONLY=0
 for arg in "$@"; do
     case $arg in
         -y|--yes)
             AUTO_YES=1
             ;;
+        --build-only)
+            BUILD_ONLY=1
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  -y, --yes    Automatically install missing packages without prompting"
-            echo "  -h, --help   Show this help message"
+            echo "  -y, --yes       Automatically install missing packages without prompting"
+            echo "  --build-only    Only check build-time requirements (skip X11 runtime checks)"
+            echo "  -h, --help      Show this help message"
             exit 0
             ;;
         *)
@@ -28,6 +33,9 @@ done
 echo "=== Chipmunk Tools Requirements Check ==="
 if [ $AUTO_YES -eq 1 ]; then
     echo "(Auto-install mode: -y flag enabled)"
+fi
+if [ $BUILD_ONLY -eq 1 ]; then
+    echo "(Build-only mode: checking build requirements only, skipping runtime X11 checks)"
 fi
 echo ""
 
@@ -58,11 +66,13 @@ fi
 # Check X11 display
 echo "1. Checking X11 Display..."
 X11_FAILED=0
-if [ -z "$DISPLAY" ]; then
+if [ $BUILD_ONLY -eq 1 ]; then
+    echo "   → Skipped in build-only mode (not required for compilation)"
+elif [ -z "$DISPLAY" ]; then
     echo "   ✗ DISPLAY environment variable not set"
     X11_FAILED=1
     ERRORS=$((ERRORS + 1))
-    
+
     # If on WSL, try to auto-detect and set DISPLAY
     if [ $IS_WSL -eq 1 ]; then
         WSL_HOST_IP=$(cat /etc/resolv.conf 2>/dev/null | grep nameserver | awk '{print $2}' | head -1)
@@ -211,21 +221,27 @@ echo "2. Checking X11 Fonts..."
 REQUIRED_FONTS=("6x10" "8x13")
 MISSING_FONTS=()
 
-for font in "${REQUIRED_FONTS[@]}"; do
-    if xlsfonts 2>/dev/null | grep -q "^${font}$"; then
-        echo "   ✓ Font '$font' is available"
-    else
-        echo "   ✗ Font '$font' is NOT available"
-        MISSING_FONTS+=("$font")
-        ERRORS=$((ERRORS + 1))
-    fi
-done
+if [ $BUILD_ONLY -eq 1 ]; then
+    echo "   → Skipped runtime font check in build-only mode"
+    echo "   → Font packages will be verified in step 5"
+else
+    # Runtime check: verify fonts are accessible via X server
+    for font in "${REQUIRED_FONTS[@]}"; do
+        if xlsfonts 2>/dev/null | grep -q "^${font}$"; then
+            echo "   ✓ Font '$font' is available"
+        else
+            echo "   ✗ Font '$font' is NOT available"
+            MISSING_FONTS+=("$font")
+            ERRORS=$((ERRORS + 1))
+        fi
+    done
 
-if [ ${#MISSING_FONTS[@]} -gt 0 ]; then
-    echo ""
-    echo "   To install missing fonts, run:"
-    echo "   sudo apt-get install xfonts-base xfonts-75dpi xfonts-100dpi"
-    echo "   xset fp rehash"
+    if [ ${#MISSING_FONTS[@]} -gt 0 ]; then
+        echo ""
+        echo "   To install missing fonts, run:"
+        echo "   sudo apt-get install xfonts-base xfonts-75dpi xfonts-100dpi"
+        echo "   xset fp rehash"
+    fi
 fi
 echo ""
 
@@ -304,9 +320,15 @@ elif command -v dpkg >/dev/null 2>&1; then
         if dpkg -l | grep -q "^ii.*${pkg}"; then
             echo "   ✓ Package '$pkg' is installed"
         else
-            echo "   ⚠ Package '$pkg' may not be installed"
-            MISSING_FONT_PACKAGES+=("$pkg")
-            WARNINGS=$((WARNINGS + 1))
+            if [ $BUILD_ONLY -eq 1 ]; then
+                echo "   ✗ Package '$pkg' is NOT installed (required for build)"
+                MISSING_FONT_PACKAGES+=("$pkg")
+                ERRORS=$((ERRORS + 1))
+            else
+                echo "   ⚠ Package '$pkg' may not be installed"
+                MISSING_FONT_PACKAGES+=("$pkg")
+                WARNINGS=$((WARNINGS + 1))
+            fi
         fi
     done
 else
