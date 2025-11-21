@@ -7534,15 +7534,45 @@ short mode;
       ch = '\015';
     else
       ch = inkey2();
-    if (ch == '\b' && i > 1)
+    /*
+     * KEYBOARD INPUT HANDLING IN readlnpass():
+     * ---------------------------------------
+     * This function processes keyboard input for the ':' command prompt
+     * in the main analog window. It receives character codes from inkey2().
+     *
+     * Mappings from m_inkey() (via inkey2()):
+     * - 0x07 ('\007', BEL): Backspace (delete char BEFORE cursor)
+     * - 0x05 ('\005', ENQ): Delete (delete char AT cursor - forward delete)
+     * - 0x08 ('\b', BS): Left arrow (move cursor left)
+     * - 0x1C ('\034', FS): Right arrow (move cursor right)
+     * - 0x15 ('\025', NAK): Ctrl-U (delete from start of line to char before cursor)
+     * - 0x7F ('\177', DEL): Clear entire line (Ctrl-X equivalent)
+     * - 0x03 ('\003', ETX): Ctrl-C / ESC (exit input mode)
+     * - 0x0D ('\015', CR): Enter (submit command)
+     * - Printable ASCII chars (0x20-0x7E): Insert at cursor
+     */
+    if (ch == '\b' && i > 1) {
+      /* Left arrow: move cursor left */
       i--;
-    else if (ch == '\034' && i <= strlen(s))
+    } else if (ch == '\034' && i <= strlen(s)) {
+      /* Right arrow: move cursor right */
       i++;
-    else if (ch == '\007' && i > 1) {
+    } else if (ch == '\007' && i > 1) {
+      /* Backspace: delete character BEFORE cursor */
       i--;
       strcpy_overlap(s + i - 1, s + i);
       redraw = true;
-    } else if (ch == '\177') {
+    } else if (ch == '\005' && i <= strlen(s)) {
+      /* Delete: delete character AT cursor (forward delete) */
+      strcpy_overlap(s + i - 1, s + i);
+      redraw = true;
+    } else if (ch == ('U' - '@')) { /* Ctrl-U: delete from current position to start of line */
+      if (i > 1) {
+        strcpy_overlap(s, s + i - 1);
+        i = 1;
+        redraw = true;
+      }
+    } else if (ch == '\177') { /* DEL character: clear entire line */
       *s = '\0';
       i = 1;
       redraw = true;
