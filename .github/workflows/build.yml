@@ -4,11 +4,9 @@ on:
   push:
     branches:
       - main
-      - dev
   pull_request:
     branches:
       - main
-      - dev
   release:
     types: [created, published]
   workflow_dispatch:
@@ -38,7 +36,7 @@ jobs:
       - name: Create distribution package
         run: |
           mkdir -p dist
-          tar -czf dist/chipmunk-macos-arm64.tar.gz bin/ log/lib/ lib/
+          tar -czf dist/chipmunk-macos-arm64.tar.gz bin/ log/lib/ lib/ lessons/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -71,7 +69,7 @@ jobs:
       - name: Create distribution package
         run: |
           mkdir -p dist
-          tar -czf dist/chipmunk-macos-intel.tar.gz bin/ log/lib/ lib/
+          tar -czf dist/chipmunk-macos-intel.tar.gz bin/ log/lib/ lib/ lessons/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -110,7 +108,7 @@ jobs:
       - name: Create distribution package
         run: |
           mkdir -p dist
-          tar -czf dist/chipmunk-linux-x86_64.tar.gz bin/ log/lib/ lib/
+          tar -czf dist/chipmunk-linux-x86_64.tar.gz bin/ log/lib/ lib/ lessons/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
