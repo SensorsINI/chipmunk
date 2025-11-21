@@ -3269,34 +3269,53 @@ Static Char testkey2()
 /*=                                              =*/
 /*================================================*/
 
+/* 
+ * CROSS-PLATFORM COMPILATION NOTE:
+ * --------------------------------
+ * This static helper function replaces a nested function (auto void dbglog())
+ * that was previously defined inside inkey2(). Nested functions are a GNU C
+ * extension and are NOT supported by Clang on macOS, causing compilation errors.
+ * 
+ * For cross-platform compatibility (Linux + macOS), always use static file-scope
+ * functions instead of nested functions. This ensures the code compiles with both
+ * GCC (Linux) and Clang (macOS).
+ */
+Static Void dbglog_inkey2(const char *msg, int raw, int mapped) {
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  
+  if (debug_esc == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+  
+  if (debug_esc <= 0)
+    return;
+  if (use_file == -1) {
+    const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+    if (p && *p) {
+      strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+      dbgpath[sizeof(dbgpath) - 1] = '\0';
+      use_file = 1;
+    } else {
+      strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+      use_file = 1;
+    }
+  }
+  FILE *f = fopen(dbgpath, "a");
+  if (f) {
+    fprintf(f, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
+    fclose(f);
+  } else {
+    fprintf(stderr, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
+  }
+}
+
 Static Char inkey2()
 {
   Char ch;
   static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
-  static int use_file = -1;
-  static char dbgpath[256];
-  auto void dbglog(const char *msg, int raw, int mapped) {
-    if (debug_esc <= 0)
-      return;
-    if (use_file == -1) {
-      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
-      if (p && *p) {
-        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
-        dbgpath[sizeof(dbgpath) - 1] = '\0';
-        use_file = 1;
-      } else {
-        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
-        use_file = 1;
-      }
-    }
-    FILE *f = fopen(dbgpath, "a");
-    if (f) {
-      fprintf(f, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
-      fclose(f);
-    } else {
-      fprintf(stderr, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
-    }
-  }
 
   do {
   } while (!pollkbd2());
@@ -3316,7 +3335,7 @@ Static Char inkey2()
     debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
   }
   if (debug_esc && ((unsigned char)realkey == 27 || ch == '\003')) {
-    dbglog("[chipmunk] ESC/^C detected in inkey2", (int)(unsigned char)realkey, (int)(unsigned char)ch);
+    dbglog_inkey2("[chipmunk] ESC/^C detected in inkey2", (int)(unsigned char)realkey, (int)(unsigned char)ch);
   }
   if ((ch & 255) >= 168 && (ch & 255) <= 239 && nk_capslock) {
 /* p2c: log.text, line 2967: Note: Character >= 128 encountered [281] */

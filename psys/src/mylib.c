@@ -5367,37 +5367,57 @@ boolean m_pollkbd()
  *   - Escape key normalization ensures consistent mode cancellation
  *   - Arrow key handling supports both regular and keypad variants
  */
+
+/* 
+ * CROSS-PLATFORM COMPILATION NOTE:
+ * --------------------------------
+ * This static helper function replaces a nested function (auto void dbglog())
+ * that was previously defined inside m_inkey(). Nested functions are a GNU C
+ * extension and are NOT supported by Clang on macOS, causing compilation errors.
+ * 
+ * For cross-platform compatibility (Linux + macOS), always use static file-scope
+ * functions instead of nested functions. This ensures the code compiles with both
+ * GCC (Linux) and Clang (macOS).
+ */
+static void dbglog_inkey(const char *msg) {
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  
+  if (debug_esc == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+  
+  if (debug_esc <= 0)
+    return;
+  if (use_file == -1) {
+    const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+    if (p && *p) {
+      strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+      dbgpath[sizeof(dbgpath) - 1] = '\0';
+      use_file = 1;
+    } else {
+      strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+      use_file = 1;
+    }
+  }
+  FILE *f = fopen(dbgpath, "a");
+  if (f) {
+    fputs(msg, f);
+    fputc('\n', f);
+    fclose(f);
+  } else {
+    fprintf(stderr, "%s\n", msg);
+  }
+}
+
 uchar m_inkey()
 {
   XEvent event;
   char buf[10];
   KeySym sym;
   static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
-  static int use_file = -1;
-  static char dbgpath[256];
-  auto void dbglog(const char *msg) {
-    if (debug_esc <= 0)
-      return;
-    if (use_file == -1) {
-      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
-      if (p && *p) {
-        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
-        dbgpath[sizeof(dbgpath) - 1] = '\0';
-        use_file = 1;
-      } else {
-        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
-        use_file = 1;
-      }
-    }
-    FILE *f = fopen(dbgpath, "a");
-    if (f) {
-      fputs(msg, f);
-      fputc('\n', f);
-      fclose(f);
-    } else {
-      fprintf(stderr, "%s\n", msg);
-    }
-  }
 
   Kfprintf(stderr, "m_inkey()\n");
 
@@ -5428,7 +5448,7 @@ uchar m_inkey()
 	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	}
-	dbglog("[chipmunk] ESC keysym detected (m_inkey) -> ^C");
+	dbglog_inkey("[chipmunk] ESC keysym detected (m_inkey) -> ^C");
 	return((uchar) '\003');
       }
       
@@ -5449,7 +5469,7 @@ uchar m_inkey()
 	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	}
-	dbglog("[chipmunk] Ctrl-C detected (m_inkey) -> ^C");
+	dbglog_inkey("[chipmunk] Ctrl-C detected (m_inkey) -> ^C");
 	return((uchar) '\003');
       }
       
@@ -5469,7 +5489,7 @@ uchar m_inkey()
 	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	  }
-	  dbglog("[chipmunk] ESC detected at X layer (m_inkey) -> ^C");
+	  dbglog_inkey("[chipmunk] ESC detected at X layer (m_inkey) -> ^C");
 	  return((uchar) '\003');
 	}
 	return((uchar) buf[0]);
@@ -5550,37 +5570,51 @@ uchar m_inkey()
  *   - Useful for responsive UI that needs to do work while checking for input
  *   - Same key mappings as m_inkey() for consistency
  */
+
+/* 
+ * CROSS-PLATFORM COMPILATION NOTE:
+ * See comment above dbglog_inkey() for explanation of why we use static
+ * file-scope functions instead of nested functions.
+ */
+static void dbglog_inkeyn(const char *msg) {
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  
+  if (debug_esc == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+  
+  if (debug_esc <= 0)
+    return;
+  if (use_file == -1) {
+    const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+    if (p && *p) {
+      strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+      dbgpath[sizeof(dbgpath) - 1] = '\0';
+      use_file = 1;
+    } else {
+      strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+      use_file = 1;
+    }
+  }
+  FILE *f = fopen(dbgpath, "a");
+  if (f) {
+    fputs(msg, f);
+    fputc('\n', f);
+    fclose(f);
+  } else {
+    fprintf(stderr, "%s\n", msg);
+  }
+}
+
 uchar m_inkeyn()
 {
   XEvent event;
   char buf[10];
   KeySym sym;
   static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
-  static int use_file = -1;
-  static char dbgpath[256];
-  auto void dbglog(const char *msg) {
-    if (debug_esc <= 0)
-      return;
-    if (use_file == -1) {
-      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
-      if (p && *p) {
-        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
-        dbgpath[sizeof(dbgpath) - 1] = '\0';
-        use_file = 1;
-      } else {
-        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
-        use_file = 1;
-      }
-    }
-    FILE *f = fopen(dbgpath, "a");
-    if (f) {
-      fputs(msg, f);
-      fputc('\n', f);
-      fclose(f);
-    } else {
-      fprintf(stderr, "%s\n", msg);
-    }
-  }
 
   Kfprintf(stderr, "m_inkeyn()\n");
 
@@ -5613,7 +5647,7 @@ uchar m_inkeyn()
 	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	  }
-	  dbglog("[chipmunk] ESC keysym detected (m_inkeyn) -> ^C");
+	  dbglog_inkeyn("[chipmunk] ESC keysym detected (m_inkeyn) -> ^C");
 	  XPutBackEvent(m_display, &event);
 	  return((uchar) '\003');
 	}
@@ -5640,7 +5674,7 @@ uchar m_inkeyn()
 	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	  }
-	  dbglog("[chipmunk] Ctrl-C detected (m_inkeyn) -> ^C");
+	  dbglog_inkeyn("[chipmunk] Ctrl-C detected (m_inkeyn) -> ^C");
 	  return((uchar) '\003');
 	}
 	
@@ -5664,7 +5698,7 @@ uchar m_inkeyn()
 	      const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	      debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	    }
-	    dbglog("[chipmunk] ESC detected at X layer (m_inkeyn) -> ^C");
+	    dbglog_inkeyn("[chipmunk] ESC detected at X layer (m_inkeyn) -> ^C");
 	    return((uchar) '\003');
 	  }
 	  return(buf[0]);
@@ -5741,37 +5775,51 @@ uchar m_inkeyn()
  *   - Must call m_inkey() later to actually consume the event
  *   - Same special key mappings as m_inkey() and m_inkeyn()
  */
+
+/* 
+ * CROSS-PLATFORM COMPILATION NOTE:
+ * See comment above dbglog_inkey() for explanation of why we use static
+ * file-scope functions instead of nested functions.
+ */
+static void dbglog_testkey(const char *msg) {
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  
+  if (debug_esc == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+  
+  if (debug_esc <= 0)
+    return;
+  if (use_file == -1) {
+    const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+    if (p && *p) {
+      strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+      dbgpath[sizeof(dbgpath) - 1] = '\0';
+      use_file = 1;
+    } else {
+      strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+      use_file = 1;
+    }
+  }
+  FILE *f = fopen(dbgpath, "a");
+  if (f) {
+    fputs(msg, f);
+    fputc('\n', f);
+    fclose(f);
+  } else {
+    fprintf(stderr, "%s\n", msg);
+  }
+}
+
 uchar m_testkey()
 {
   XEvent event;
   char buf[10];
   KeySym sym;
   static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
-  static int use_file = -1;
-  static char dbgpath[256];
-  auto void dbglog(const char *msg) {
-    if (debug_esc <= 0)
-      return;
-    if (use_file == -1) {
-      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
-      if (p && *p) {
-        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
-        dbgpath[sizeof(dbgpath) - 1] = '\0';
-        use_file = 1;
-      } else {
-        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
-        use_file = 1;
-      }
-    }
-    FILE *f = fopen(dbgpath, "a");
-    if (f) {
-      fputs(msg, f);
-      fputc('\n', f);
-      fclose(f);
-    } else {
-      fprintf(stderr, "%s\n", msg);
-    }
-  }
 
   Kfprintf(stderr, "m_testkey()\n");
 
@@ -5803,7 +5851,7 @@ uchar m_testkey()
 	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	}
-	dbglog("[chipmunk] ESC keysym detected (m_testkey) -> ^C");
+	dbglog_testkey("[chipmunk] ESC keysym detected (m_testkey) -> ^C");
 	XPutBackEvent(m_display, &event);
 	return((uchar) '\003');
       }
@@ -5830,7 +5878,7 @@ uchar m_testkey()
 	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	}
-	dbglog("[chipmunk] Ctrl-C detected (m_testkey) -> ^C");
+	dbglog_testkey("[chipmunk] Ctrl-C detected (m_testkey) -> ^C");
 	return((uchar) '\003');
       }
       
@@ -5854,7 +5902,7 @@ uchar m_testkey()
 	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	  }
-	  dbglog("[chipmunk] ESC detected at X layer (m_testkey) -> ^C");
+	  dbglog_testkey("[chipmunk] ESC detected at X layer (m_testkey) -> ^C");
 	  return((uchar) '\003');
 	}
 	return(buf[0]);

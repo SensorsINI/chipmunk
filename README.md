@@ -56,6 +56,8 @@ If you need to customize the build or develop Chipmunk:
 
 See [Building and Installation](#building-and-installation) for detailed instructions and troubleshooting.
 
+**For developers:** See [DEVELOPER.md](DEVELOPER.md) for cross-platform development guidelines, code style, and best practices.
+
 ## Version
 
 - **This Repository Version**: 6.2.0

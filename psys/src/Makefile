@@ -109,7 +109,14 @@ endif
 # Note: CC comes from environment (e.g., CC=/opt/homebrew/bin/gcc-<version>)
 # Use := for immediate expansion to capture the environment CC before we override it
 BASE_CC := $(CC)
-CHIPMUNKCC = $(BASE_CC) -g -Wno-format-overflow -Wno-stringop-overflow
+# Detect compiler type and set appropriate warning flags
+ifeq ($(UNAME_S),Darwin)
+  # macOS/Clang: suppress deprecated non-prototype warnings, skip GCC-only flags
+  CHIPMUNKCC = $(BASE_CC) -g -Wno-deprecated-non-prototype
+else
+  # Linux/GCC: use GCC-specific warning suppressions
+  CHIPMUNKCC = $(BASE_CC) -g -Wno-format-overflow -Wno-stringop-overflow -Wno-deprecated-non-prototype
+endif
 
 OBJS = sysdevs.o \
        markrelease.o \

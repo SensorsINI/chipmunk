@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Cross-Platform Compilation**: Fixed nested function compilation errors on macOS/Clang by converting to standard C static file-scope functions
+- **Build Warnings**: Suppressed deprecated function prototype warnings on both Linux and macOS for cleaner build output
+- **Compiler Flags**: Updated Makefiles to use platform-appropriate warning flags (GCC-specific flags only on Linux, Clang-compatible flags on macOS)
+
+### Developer Experience
+- **DEVELOPER.md**: Added comprehensive developer guide with cross-platform development guidelines
+- **Code Documentation**: Added inline comments explaining why static functions are used instead of nested functions for cross-platform compatibility
+- **Build System**: Improved platform detection in Makefiles for better cross-platform support
+
 ## [6.1.0] - 2025-11-17
 
 ### Added
