@@ -33,9 +33,13 @@ echo "Copying files to release package..."
 mkdir -p "${RELEASE_DIR}/bin"
 cp bin/analog bin/diglog bin/loged bin/fixfet7 "${RELEASE_DIR}/bin/" 2>/dev/null || true
 
-# Copy configuration files and lessons
+# Copy configuration files
 mkdir -p "${RELEASE_DIR}/log/lib"
 cp -r log/lib/* "${RELEASE_DIR}/log/lib/"
+
+# Copy lessons
+mkdir -p "${RELEASE_DIR}/lessons"
+cp -r lessons/* "${RELEASE_DIR}/lessons/"
 
 # Copy documentation
 mkdir -p "${RELEASE_DIR}/docs"

@@ -3269,34 +3269,53 @@ Static Char testkey2()
 /*=                                              =*/
 /*================================================*/
 
+/* 
+ * CROSS-PLATFORM COMPILATION NOTE:
+ * --------------------------------
+ * This static helper function replaces a nested function (auto void dbglog())
+ * that was previously defined inside inkey2(). Nested functions are a GNU C
+ * extension and are NOT supported by Clang on macOS, causing compilation errors.
+ * 
+ * For cross-platform compatibility (Linux + macOS), always use static file-scope
+ * functions instead of nested functions. This ensures the code compiles with both
+ * GCC (Linux) and Clang (macOS).
+ */
+Static Void dbglog_inkey2(const char *msg, int raw, int mapped) {
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  
+  if (debug_esc == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+  
+  if (debug_esc <= 0)
+    return;
+  if (use_file == -1) {
+    const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+    if (p && *p) {
+      strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+      dbgpath[sizeof(dbgpath) - 1] = '\0';
+      use_file = 1;
+    } else {
+      strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+      use_file = 1;
+    }
+  }
+  FILE *f = fopen(dbgpath, "a");
+  if (f) {
+    fprintf(f, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
+    fclose(f);
+  } else {
+    fprintf(stderr, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
+  }
+}
+
 Static Char inkey2()
 {
   Char ch;
   static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
-  static int use_file = -1;
-  static char dbgpath[256];
-  auto void dbglog(const char *msg, int raw, int mapped) {
-    if (debug_esc <= 0)
-      return;
-    if (use_file == -1) {
-      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
-      if (p && *p) {
-        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
-        dbgpath[sizeof(dbgpath) - 1] = '\0';
-        use_file = 1;
-      } else {
-        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
-        use_file = 1;
-      }
-    }
-    FILE *f = fopen(dbgpath, "a");
-    if (f) {
-      fprintf(f, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
-      fclose(f);
-    } else {
-      fprintf(stderr, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
-    }
-  }
 
   do {
   } while (!pollkbd2());
@@ -3316,7 +3335,7 @@ Static Char inkey2()
     debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
   }
   if (debug_esc && ((unsigned char)realkey == 27 || ch == '\003')) {
-    dbglog("[chipmunk] ESC/^C detected in inkey2", (int)(unsigned char)realkey, (int)(unsigned char)ch);
+    dbglog_inkey2("[chipmunk] ESC/^C detected in inkey2", (int)(unsigned char)realkey, (int)(unsigned char)ch);
   }
   if ((ch & 255) >= 168 && (ch & 255) <= 239 && nk_capslock) {
 /* p2c: log.text, line 2967: Note: Character >= 128 encountered [281] */
@@ -15586,6 +15605,9 @@ log_grec *g;
 /* p2c: log.text, line 14480: Note: Character >= 128 encountered [281] */
       if (ch == '\007' && *n != '\0')
 	n[strlen(n) - 1] = '\0';
+      /* Handle Delete key (0x05) - same as backspace in this simple input */
+      if (ch == '\005' && *n != '\0')
+	n[strlen(n) - 1] = '\0';
     }
   } while (!((ch < 32 && ((1L << ch) & 0x2008) != 0) || gg.t.dn));
   remcursor();
@@ -17928,11 +17950,39 @@ Char *filename_;
   short i, j, count, numvw, numnodes;
   Char STR1[9];
   Char STR2[256];
+  Char fullpath[512];  /* Buffer for constructing full path */
   short FORLIM;
 
   strcpy(filename, filename_);
   f = NULL;
   newci_fixfname(filename, "lgf", "");
+  
+  /* If filename is relative (not absolute path), save to launch directory if available */
+  /* This ensures saves go to the same place as loads (user's working directory) */
+  /* Check for relative path: not starting with /, ~, %, or * */
+  if (*filename != '\0' && filename[0] != '/' && filename[0] != '~' && 
+      filename[0] != '%' && filename[0] != '*') {
+    char *launch_dir = getenv("CHIPMUNK_LAUNCH_DIR");
+    if (launch_dir != NULL && *launch_dir != '\0') {
+      /* Prepend launch directory to relative filename */
+      sprintf(fullpath, "%s/%s", launch_dir, filename);
+      strcpy(filename, fullpath);
+    } else {
+      /* If CHIPMUNK_LAUNCH_DIR not set, try to use directory of loaded file if available */
+      if (curfilename[pgnum - 1] != NULL && *curfilename[pgnum - 1] != '\0') {
+	Char *last_slash = strrchr(curfilename[pgnum - 1], '/');
+	if (last_slash != NULL) {
+	  Char savedir[256];
+	  long dir_len = last_slash - curfilename[pgnum - 1];
+	  strncpy(savedir, curfilename[pgnum - 1], dir_len);
+	  savedir[dir_len] = '\0';
+	  sprintf(fullpath, "%s/%s", savedir, filename);
+	  strcpy(filename, fullpath);
+	}
+      }
+    }
+  }
+  
   if (*filename != '\0' && pageempty(pgnum) && access(filename, F_OK) == 0) {
     sprintf(STR2, "File %s not overwritten with empty page!", filename);
     message(STR2);
@@ -18227,6 +18277,8 @@ short pgnum;
 Char *fn;
 {
   long i, j;
+  Char saved_path[256];
+  Char msg[512];
 
   if (*fn == '\0')
     return;
@@ -18234,8 +18286,17 @@ Char *fn;
   TRY(try26);
     printf("Saving file %s\n", fn);
     m_alpha_on();
+    /* Store the filename before savepage modifies it */
+    strcpy(saved_path, fn);
     savepage(pgnum, fn);
+    /* Get the actual saved path from curfilename (savepage sets it) */
+    if (curfilename[pgnum - 1] != NULL && *curfilename[pgnum - 1] != '\0') {
+      strcpy(saved_path, curfilename[pgnum - 1]);
+    }
     endbottom();
+    /* Show confirmation message in message area */
+    sprintf(msg, "File saved to: %s", saved_path);
+    message(msg);
   RECOVER(try26);
     i = P_escapecode;
     j = P_ioresult;
@@ -18747,13 +18808,48 @@ struct LOC_initialize *LINK;
   return Result;
 }
 
+/*
+ * locatefile() - Search for a file in multiple directories
+ * 
+ * Searches for a file in the following order:
+ *   1. Current directory (where program is running from - usually log/lib)
+ *   2. Launch directory (where user started analog from - if CHIPMUNK_LAUNCH_DIR set)
+ *   3. Home directory
+ *   4. LOGLIB directory (usually <chipmunk>/log/lib)
+ * 
+ * The CHIPMUNK_LAUNCH_DIR environment variable is set by the bin/analog wrapper
+ * script to preserve the user's working directory. This allows :load commands
+ * to resolve relative paths from where the user launched the program, not from
+ * the internal working directory (log/lib) that the program changes to.
+ *
+ * Example:
+ *   User launches from ~/chipmunk: ./bin/analog
+ *   User types in console: :load lessons/nfet.lgf
+ *   Without CHIPMUNK_LAUNCH_DIR: looks for ~/chipmunk/log/lib/lessons/nfet.lgf (fails)
+ *   With CHIPMUNK_LAUNCH_DIR: looks for ~/chipmunk/lessons/nfet.lgf (succeeds)
+ */
 Local boolean locatefile(name, LINK)
 Char *name;
 struct LOC_initialize *LINK;
 {
   Char path[256];
+  Char launchdir[256];
+  char *launch_env;
 
   sprintf(path, "%s/", GetChipmunkPath("LOGLIB", LOGLIB));
+  
+  /* Check if CHIPMUNK_LAUNCH_DIR is set (from wrapper script) */
+  launch_env = getenv("CHIPMUNK_LAUNCH_DIR");
+  if (launch_env != NULL && *launch_env != '\0') {
+    sprintf(launchdir, "%s/", launch_env);
+    /* Search order: current dir, launch dir, home dir, LOGLIB */
+    return (tryfindfile(name, "", LINK) ||
+	    tryfindfile(name, launchdir, LINK) ||
+	    tryfindfile(name, gg.homedirname, LINK) ||
+	    tryfindfile(name, path, LINK));
+  }
+  
+  /* Fallback if CHIPMUNK_LAUNCH_DIR not set */
   return (tryfindfile(name, "", LINK) ||
 	  tryfindfile(name, gg.homedirname, LINK) ||
 	  tryfindfile(name, path, LINK));
@@ -19315,6 +19411,8 @@ Static Void loadcommand()
   } else
     strcpy(filename, gg.funcarg);
   if (*filename != '\0') {
+    /* Add .lgf extension if not present */
+    newci_fixfname(filename, "lgf", "");
     beginbottom();
     TRY(try27);
       printf("Loading file %s\n", filename);
@@ -19328,8 +19426,16 @@ Static Void loadcommand()
       beginerror();
       if (Debugging || debugprint || gg.traceflag)
 	printf("%d/%d/%ld  ", i, j, EXCP_LINE);
-      if (i == -10 && (unsigned)j < 32 && ((1L << j) & 0x600) != 0)
+      if (i == -10 && (unsigned)j < 32 && ((1L << j) & 0x600) != 0) {
+	char *launch_dir = getenv("CHIPMUNK_LAUNCH_DIR");
 	printf("Can't find file \"%s\"\n", filename);
+	if (launch_dir != NULL && *launch_dir != '\0') {
+	  printf("  (searched in: launch dir, current dir, home dir, LOGLIB)\n");
+	  printf("  Launch directory was: %s\n", launch_dir);
+	} else {
+	  printf("  (searched in: current dir, home dir, LOGLIB)\n");
+	}
+      }
       else if (i == -20)
 	printf("STOP key pressed while loading file.\n");
       else if (i > 0)

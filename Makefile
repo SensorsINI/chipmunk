@@ -7,7 +7,7 @@
 # Use bash for targets that need bash features
 SHELL := /bin/bash
 
-.PHONY: all build clean install default help check setup install-deps uninstall uninstall-deps uninstall-bashrc bin/diglog
+.PHONY: all build clean install default help check setup install-deps uninstall uninstall-deps uninstall-rc uninstall-bashrc bin/diglog
 
 # Sentinel file to track successful requirements check
 REQUIREMENTS_CHECKED := .requirements_checked
@@ -101,8 +101,8 @@ uninstall-deps:
 		echo "   If you want to remove it: sudo apt-get remove analog"; \
 	fi
 
-# Uninstall: Remove .bashrc changes and optionally dependencies
-uninstall: uninstall-bashrc
+# Uninstall: Remove shell RC file changes and optionally dependencies
+uninstall: uninstall-rc
 	@echo ""
 	@read -p "Also uninstall dependencies (x11-utils, xfonts packages)? [y/N] " -n 1 -r; \
 	echo ""; \
@@ -110,66 +110,93 @@ uninstall: uninstall-bashrc
 		$(MAKE) uninstall-deps; \
 	fi
 
-# Remove DISPLAY export and PATH from .bashrc
-uninstall-bashrc:
-	@echo "Removing Chipmunk changes from ~/.bashrc..."
-	@if [ ! -f ~/.bashrc ]; then \
-		echo "~/.bashrc not found. Nothing to remove."; \
+# Remove DISPLAY export and PATH from shell RC file (.bashrc or .zshrc)
+uninstall-rc:
+	@# Detect user's default shell and corresponding RC file \
+	USER_SHELL="$${SHELL:-/bin/bash}"; \
+	if [[ "$$USER_SHELL" == */zsh ]]; then \
+		RC_FILE=~/.zshrc; \
+		SHELL_NAME="zsh"; \
+	elif [[ "$$USER_SHELL" == */bash ]] || [[ "$$USER_SHELL" == */sh ]]; then \
+		RC_FILE=~/.bashrc; \
+		SHELL_NAME="bash"; \
+	else \
+		RC_FILE=~/.bashrc; \
+		SHELL_NAME="bash"; \
+	fi; \
+	echo "Removing Chipmunk changes from $$RC_FILE ($$SHELL_NAME)..."; \
+	if [ ! -f $$RC_FILE ]; then \
+		echo "$$RC_FILE not found. Nothing to remove."; \
 		exit 0; \
 	fi; \
-	BACKUP_FILE=~/.bashrc.chipmunk-backup-$$(date +%Y%m%d-%H%M%S); \
-	cp ~/.bashrc $$BACKUP_FILE; \
+	BACKUP_FILE=$$RC_FILE.chipmunk-backup-$$(date +%Y%m%d-%H%M%S); \
+	cp $$RC_FILE $$BACKUP_FILE; \
 	echo "Created backup: $$BACKUP_FILE"; \
 	REMOVED=0; \
 	\
 	# Remove chipmunk PATH block (between markers) \
 	MARKER_BEGIN="# >>> chipmunk PATH (added by build) >>>"; \
 	MARKER_END="# <<< chipmunk PATH (added by build) <<<"; \
-	if grep -qF "$$MARKER_BEGIN" ~/.bashrc 2>/dev/null; then \
+	if grep -qF "$$MARKER_BEGIN" $$RC_FILE 2>/dev/null; then \
 		awk -v b="$$MARKER_BEGIN" -v e="$$MARKER_END" ' \
 			$$0==b{skip=1; next} $$0==e{skip=0; next} !skip{print} \
-		' ~/.bashrc > ~/.bashrc.chipmunk.tmp && mv ~/.bashrc.chipmunk.tmp ~/.bashrc; \
+		' $$RC_FILE > $$RC_FILE.chipmunk.tmp && mv $$RC_FILE.chipmunk.tmp $$RC_FILE; \
 		REMOVED=1; \
-		echo "✓ Removed Chipmunk PATH export from ~/.bashrc"; \
+		echo "✓ Removed Chipmunk PATH export from $$RC_FILE"; \
 	fi; \
 	\
-	# Remove lines matching DISPLAY export patterns \
-	# Pattern 1: export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0 \
-	if grep -q "export DISPLAY.*resolv.conf" ~/.bashrc 2>/dev/null; then \
-		sed -i '/export DISPLAY.*resolv\.conf/d' ~/.bashrc; \
-		REMOVED=1; \
-		echo "✓ Removed DISPLAY export (resolv.conf pattern) from ~/.bashrc"; \
-	fi; \
-	# Pattern 2: export DISPLAY=IP:0 or export DISPLAY=IP:0.0 \
-	if grep -qE "^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0" ~/.bashrc 2>/dev/null; then \
-		if sed --version >/dev/null 2>&1; then \
-			sed -i -E '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0/d' ~/.bashrc; \
-		else \
-			sed -iE '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0/d' ~/.bashrc; \
+	# Remove lines matching DISPLAY export patterns (Linux/WSL-specific, check both rc files) \
+	for RC in ~/.bashrc ~/.zshrc; do \
+		if [ -f $$RC ]; then \
+			RC_REMOVED=0; \
+			# Pattern 1: export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0 \
+			if grep -q "export DISPLAY.*resolv.conf" $$RC 2>/dev/null; then \
+				sed -i '/export DISPLAY.*resolv\.conf/d' $$RC; \
+				RC_REMOVED=1; \
+				echo "✓ Removed DISPLAY export (resolv.conf pattern) from $$RC"; \
+			fi; \
+			# Pattern 2: export DISPLAY=IP:0 or export DISPLAY=IP:0.0 \
+			if grep -qE "^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0" $$RC 2>/dev/null; then \
+				if sed --version >/dev/null 2>&1; then \
+					sed -i -E '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0/d' $$RC; \
+				else \
+					sed -iE '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0/d' $$RC; \
+				fi; \
+				RC_REMOVED=1; \
+				echo "✓ Removed DISPLAY export (IP:0 pattern) from $$RC"; \
+			fi; \
+			# Pattern 3: export DISPLAY=IP:0.0 \
+			if grep -qE "^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0\.0" $$RC 2>/dev/null; then \
+				if sed --version >/dev/null 2>&1; then \
+					sed -i -E '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0\.0/d' $$RC; \
+				else \
+					sed -iE '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0\.0/d' $$RC; \
+				fi; \
+				RC_REMOVED=1; \
+				echo "✓ Removed DISPLAY export (IP:0.0 pattern) from $$RC"; \
+			fi; \
+			if [ $$RC_REMOVED -eq 1 ]; then \
+				REMOVED=1; \
+			fi; \
 		fi; \
-		REMOVED=1; \
-		echo "✓ Removed DISPLAY export (IP:0 pattern) from ~/.bashrc"; \
-	fi; \
-	# Pattern 3: export DISPLAY=IP:0.0 \
-	if grep -qE "^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0\.0" ~/.bashrc 2>/dev/null; then \
-		if sed --version >/dev/null 2>&1; then \
-			sed -i -E '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0\.0/d' ~/.bashrc; \
-		else \
-			sed -iE '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0\.0/d' ~/.bashrc; \
-		fi; \
-		REMOVED=1; \
-		echo "✓ Removed DISPLAY export (IP:0.0 pattern) from ~/.bashrc"; \
-	fi; \
+	done; \
 	\
 	if [ $$REMOVED -eq 1 ]; then \
 		echo ""; \
-		echo "✓ Chipmunk changes removed from ~/.bashrc"; \
+		echo "✓ Chipmunk changes removed from shell RC file(s)"; \
 		echo "  Backup saved to: $$BACKUP_FILE"; \
-		echo "  Note: Open a new terminal or run 'source ~/.bashrc' to apply changes."; \
+		if [[ "$$SHELL_NAME" == "zsh" ]]; then \
+			echo "  Note: Open a new terminal or run 'source $$RC_FILE' to apply changes."; \
+		else \
+			echo "  Note: Open a new terminal or run '. $$RC_FILE' to apply changes."; \
+		fi; \
 	else \
-		echo "No Chipmunk changes found in ~/.bashrc"; \
+		echo "No Chipmunk changes found in shell RC file(s)"; \
 		rm -f $$BACKUP_FILE; \
 	fi
+
+# Backward compatibility alias for uninstall-bashrc
+uninstall-bashrc: uninstall-rc
 
 # Run check_requirements.sh and create sentinel file on success
 $(REQUIREMENTS_CHECKED):
@@ -291,7 +318,7 @@ help:
 	@echo "  make build        - Build everything"
 	@echo "  make setup        - Automatically install dependencies and build"
 	@echo "  make install-deps - Automatically install missing dependencies (non-interactive)"
-	@echo "  make uninstall    - Remove .bashrc changes and optionally uninstall dependencies"
+	@echo "  make uninstall    - Remove shell RC file (.bashrc/.zshrc) changes and optionally uninstall dependencies"
 	@echo "  make uninstall-deps - Uninstall dependencies (x11-utils, xfonts packages)"
 	@echo "  make clean        - Remove all build artifacts"
 	@echo "  make install      - Build and install everything"

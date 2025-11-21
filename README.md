@@ -56,6 +56,8 @@ If you need to customize the build or develop Chipmunk:
 
 See [Building and Installation](#building-and-installation) for detailed instructions and troubleshooting.
 
+**For developers:** See [DEVELOPER.md](DEVELOPER.md) for cross-platform development guidelines, code style, and best practices.
+
 ## Version
 
 - **This Repository Version**: 6.2.0
@@ -222,13 +224,14 @@ Configuration files define:
 
 ## Sample Circuits for Learning
 
-Chipmunk includes **interactive lesson files** designed for learning analog simulation. These are located in `log/lib/`:
+Chipmunk includes **interactive lesson files** designed for learning analog simulation. These are located in the `lessons/` directory:
 
 - **`lesson1.lgf`**: First interactive lesson (recommended for beginners)
 - **`lesson2.lgf`**: Second lesson
 - **`lesson3.lgf`**: Third lesson
 - **`lesson4.lgf`**: Fourth lesson
 - **`lesson5.lgf`**: Fifth lesson
+- **`nfet.lgf`**: NFET transistor characterization example
 
 These lessons are annotated circuit schematics that form an interactive tutorial for learning Analog. They were developed by Dave Gillespie and are described in the [official documentation](https://john-lazzaro.github.io/chipmunk/document/log/index.html#interactive-lessons).
 
@@ -237,20 +240,20 @@ These lessons are annotated circuit schematics that form an interactive tutorial
 To open a lesson circuit on startup:
 
 ```bash
-./bin/analog log/lib/lesson1.lgf
+./bin/analog lessons/lesson1.lgf
 ```
 
 To open the NFET characterization example:
 
 ```bash
-./bin/analog nfet.lgf
+./bin/analog lessons/nfet.lgf
 ```
 
 **Recommendation for first-time users**: Start with `lesson1.lgf` to learn the basics of analog circuit simulation.
 
 ### Other Sample Circuits
 
-- **`nfet.lgf`**: NFET transistor characterization example
+- **`lessons/nfet.lgf`**: NFET transistor characterization example
   - Demonstrates Ids vs Vgs sweep (drain current vs gate-source voltage)
   - Shows logarithmic plotting of current vs gate voltage in scope mode
   - Useful for understanding MOSFET characteristics and parameter extraction

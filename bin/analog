@@ -22,20 +22,24 @@ if [ "$1" = "--help" ] || ([ "$1" = "-h" ] && [ -z "$2" ]); then
     echo ""
     echo "Examples:"
     echo "  ./bin/analog                           # Start with lesson1.lgf (for beginners)"
-    echo "  ./bin/analog log/lib/lesson1.lgf       # Open a specific circuit file"
+    echo "  ./bin/analog lessons/lesson1.lgf       # Open a specific circuit file"
     echo "  ./bin/analog -c log/lib/mos_example.cnf # Use custom configuration"
     echo ""
     echo "For more information, see: https://john-lazzaro.github.io/chipmunk/document/log/index.html"
     exit 0
 fi
 
-# Process arguments to handle paths correctly after cd to log/lib
+# Save the launch directory for relative path resolution in :load commands
+# This allows users to load files relative to where they launched analog
+export CHIPMUNK_LAUNCH_DIR="$(pwd)"
+
+# Process arguments to handle paths correctly
 declare -a ARGS=()
 for arg in "$@"; do
     # Check if this looks like a file path
     if [ -f "$arg" ]; then
-        # Get just the filename, assuming files should be in log/lib
-        ARGS+=("$(basename "$arg")")
+        # Convert to absolute path to handle files from any location
+        ARGS+=("$(cd "$(dirname "$arg")" && pwd)/$(basename "$arg")")
     else
         # Keep other arguments as-is (like -v, -x, etc.)
         ARGS+=("$arg")
@@ -47,7 +51,7 @@ cd "${CHIPMUNK_DIR}/log/lib"
 
 # If no arguments provided, open lesson1.lgf for first-time users
 if [ $# -eq 0 ]; then
-    exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf lesson1.lgf
+    exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf "${CHIPMUNK_DIR}/lessons/lesson1.lgf"
 else
     # Use -c option to explicitly load analog.cnf configuration
     exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf "${ARGS[@]}"

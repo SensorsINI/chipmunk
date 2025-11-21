@@ -78,6 +78,18 @@
  * Special keys are mapped for consistency:
  * - XK_Escape (key symbol 65307) → '\003' (ASCII 3, Ctrl-C/EXEC)
  * - Ctrl+C (ControlMask + 'c') → '\003'
+ * - XK_BackSpace → '\007' (ASCII 7, BEL) - delete char before cursor
+ * - XK_Delete → '\005' (ASCII 5, ENQ) - delete char at cursor position
+ * - Arrow keys (Up/Down/Left/Right) → scroll codes for navigation
+ *
+ * IMPORTANT: Keysym checking order matters!
+ * The keyboard input functions check XLookupKeysym() FIRST for special keys
+ * (BackSpace, Delete, Escape, arrows), then fall back to XLookupString() for
+ * regular character input. This ensures proper handling of keys that may have
+ * platform-specific default mappings.
+ *
+ * Note: XRebindKeysym() is attempted but may not work reliably on all systems,
+ * so explicit keysym checks are the primary mechanism for special key handling.
  * - Allows both Escape and Ctrl-C to exit modes consistently
  *
  * DEBUG SUPPORT:
@@ -978,13 +990,55 @@ fprintf(stderr, "plane_mask %x, notAllPlanes %x\n", plane_mask, notAllPlanes);
 #define wol_right_arrow "\034"
 #define wol_down_arrow "\n"
 #define wol_up_arrow "\037"
+#define wol_backspace "\007"
+#define wol_delete "\005"
 
+/*
+ * ============================================================================
+ * mapkey() - Initialize X11 keyboard mappings via XRebindKeysym
+ * ============================================================================
+ * 
+ * Attempts to rebind special X11 keysyms to specific character codes using
+ * XRebindKeysym(). This provides a secondary mechanism for special key handling,
+ * though explicit keysym checking (in m_inkey/m_inkeyn/m_testkey) is the primary
+ * and more reliable method.
+ *
+ * KEYS MAPPED:
+ *   - XK_BackSpace → 0x07 (wol_backspace) - delete char before cursor
+ *   - XK_Delete → 0x05 (wol_delete) - delete char at cursor
+ *   - XK_Left → 0x08 (wol_left_arrow) - scroll/move left
+ *   - XK_Right → 0x1C (wol_right_arrow) - scroll/move right
+ *   - XK_Up → 0x1F (wol_up_arrow) - scroll/move up
+ *   - XK_Down → 0x0A (wol_down_arrow) - scroll/move down
+ *   - XK_Select → 0x03 (wol_select) - EXEC/Ctrl-C
+ *   - Various HP-specific keys → "" (disabled)
+ *
+ * PLATFORM NOTES:
+ *   - XRebindKeysym() behavior varies across X11 implementations
+ *   - May not work reliably on all platforms/terminals
+ *   - Keyboard input functions use explicit XLookupKeysym() checks as primary
+ *     mechanism, making this function a secondary/fallback approach
+ *
+ * CALLED FROM:
+ *   - WindowInitialize() during X11 window setup
+ *
+ * RELIABILITY:
+ *   - XRebindKeysym is attempted but not relied upon
+ *   - Primary key handling: Explicit keysym checks in m_inkey/m_inkeyn/m_testkey
+ *   - This approach ensures consistent behavior across platforms
+ *
+ * HISTORICAL CONTEXT:
+ *   - Originally designed for WOL (Window Oriented Language) environment
+ *   - Mapped function keys for HP terminals in 1980s
+ *   - Modern systems use explicit keysym checks instead
+ */
 void mapkey()
 {
   Xfprintf(stderr, "several XRebindKeysym()'s\n");
+   XRebindKeysym(m_display,XK_BackSpace,NULL,0,(unsigned char *)wol_backspace,1) ;
    XRebindKeysym(m_display,XK_Find,NULL,0,(unsigned char *)"",0) ;
    XRebindKeysym(m_display,XK_Insert,NULL,0,(unsigned char *)"",0) ;
-   XRebindKeysym(m_display,XK_Delete,NULL,0,(unsigned char *)"",0) ;
+   XRebindKeysym(m_display,XK_Delete,NULL,0,(unsigned char *)wol_delete,1) ;
    XRebindKeysym(m_display,XK_Select,NULL,0,(unsigned char *)wol_select,1) ;
    XRebindKeysym(m_display,XK_Prior,NULL,0,(unsigned char *)"",0) ;
    XRebindKeysym(m_display,XK_Next,NULL,0,(unsigned char *)"",0) ;
@@ -1000,7 +1054,6 @@ void mapkey()
    XRebindKeysym(m_display,XK_ClearLine,NULL,0,(unsigned char *)"",0) ;
    XRebindKeysym(m_display,XK_InsertLine,NULL,0,(unsigned char *)"",0) ;
    XRebindKeysym(m_display,XK_DeleteLine,NULL,0,(unsigned char *)"",0) ;
-   XRebindKeysym(m_display,XK_DeleteChar,NULL,0,(unsigned char *)"",0) ;
    XRebindKeysym(m_display,XK_BackTab,NULL,0,(unsigned char *)"",0) ;
    XRebindKeysym(m_display,XK_KP_BackTab,NULL,0,(unsigned char *)"",0) ;
 #endif
@@ -5273,37 +5326,98 @@ boolean m_pollkbd()
   }
 }
 
+/*
+ * ============================================================================
+ * m_inkey() - Blocking keyboard input function
+ * ============================================================================
+ * 
+ * Returns the next character from keyboard input, blocking until a key is
+ * pressed. This is the primary keyboard input function for modal operations.
+ *
+ * RETURN VALUE:
+ *   - Regular characters: ASCII value (32-126)
+ *   - Special keys: Mapped control codes:
+ *     - Backspace (XK_BackSpace) → 0x07 (delete char before cursor)
+ *     - Delete (XK_Delete) → 0x05 (delete char at cursor)
+ *     - Escape/Ctrl-C → 0x03 (exit mode/cancel)
+ *     - Up arrow → 0x1F (31, scroll up)
+ *     - Down arrow → 0x0A (10, scroll down)
+ *     - Left arrow → 0x08 (8, scroll left)
+ *     - Right arrow → 0x1C (28, scroll right)
+ *   - Special events:
+ *     - Expose event (window needs redraw) → 250
+ *     - ConfigureNotify (window resized) → 251
+ *
+ * KEY PROCESSING ORDER:
+ *   1. Check keysym for special keys (BackSpace, Delete, Escape, arrows)
+ *   2. Fall back to XLookupString() for regular character input
+ *   3. Also processes Expose and ConfigureNotify events during wait
+ *
+ * BEHAVIOR:
+ *   - Blocks until keyboard input or window event is available
+ *   - Cursor is shown during wait (nc_cursor_on/off)
+ *   - Processes window resize events and updates m_across, m_down
+ *   - Handles both alpha (console) window and graphics window refreshes
+ *
+ * THREAD SAFETY: Not thread-safe (uses static variables for debug state)
+ *
+ * NOTES:
+ *   - XRebindKeysym() is attempted at initialization but explicit keysym
+ *     checks are the primary mechanism (more reliable across platforms)
+ *   - Escape key normalization ensures consistent mode cancellation
+ *   - Arrow key handling supports both regular and keypad variants
+ */
+
+/* 
+ * CROSS-PLATFORM COMPILATION NOTE:
+ * --------------------------------
+ * This static helper function replaces a nested function (auto void dbglog())
+ * that was previously defined inside m_inkey(). Nested functions are a GNU C
+ * extension and are NOT supported by Clang on macOS, causing compilation errors.
+ * 
+ * For cross-platform compatibility (Linux + macOS), always use static file-scope
+ * functions instead of nested functions. This ensures the code compiles with both
+ * GCC (Linux) and Clang (macOS).
+ */
+static void dbglog_inkey(const char *msg) {
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  
+  if (debug_esc == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+  
+  if (debug_esc <= 0)
+    return;
+  if (use_file == -1) {
+    const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+    if (p && *p) {
+      strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+      dbgpath[sizeof(dbgpath) - 1] = '\0';
+      use_file = 1;
+    } else {
+      strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+      use_file = 1;
+    }
+  }
+  FILE *f = fopen(dbgpath, "a");
+  if (f) {
+    fputs(msg, f);
+    fputc('\n', f);
+    fclose(f);
+  } else {
+    fprintf(stderr, "%s\n", msg);
+  }
+}
+
 uchar m_inkey()
 {
   XEvent event;
   char buf[10];
   KeySym sym;
   static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
-  static int use_file = -1;
-  static char dbgpath[256];
-  auto void dbglog(const char *msg) {
-    if (debug_esc <= 0)
-      return;
-    if (use_file == -1) {
-      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
-      if (p && *p) {
-        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
-        dbgpath[sizeof(dbgpath) - 1] = '\0';
-        use_file = 1;
-      } else {
-        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
-        use_file = 1;
-      }
-    }
-    FILE *f = fopen(dbgpath, "a");
-    if (f) {
-      fputs(msg, f);
-      fputc('\n', f);
-      fclose(f);
-    } else {
-      fprintf(stderr, "%s\n", msg);
-    }
-  }
 
   Kfprintf(stderr, "m_inkey()\n");
 
@@ -5318,35 +5432,27 @@ uchar m_inkey()
                           StructureNotifyMask, &event);
     nc_cursor_off();
     if (event.type == KeyPress) {
-      /* First try XLookupString - XRebindKeysym should make arrow keys return scroll codes */
-      if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
-	/* Check if this is an arrow key character (from XRebindKeysym) */
-	if (buf[0] == '\037' || buf[0] == '\n' || buf[0] == '\b' || buf[0] == '\034') {
-	  return((uchar) buf[0]);
-	}
-	/* Regular character */
-	if ((unsigned char)buf[0] == 27) {
-	  if (debug_esc == -1) {
-	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
-	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
-	  }
-	  dbglog("[chipmunk] ESC detected at X layer (m_inkey) -> ^C");
-	  return((uchar) '\003');
-	}
-	return((uchar) buf[0]);
-      }
-      /* If XLookupString returns 0, try XLookupKeysym as fallback for arrow keys and ESC */
-      /* This handles cases where XRebindKeysym didn't work or the key isn't rebound */
+      /* Check keysym first for special keys before XLookupString */
       sym = XLookupKeysym((XKeyEvent *)&event, 0);
+      
+      /* Handle BackSpace and Delete keys explicitly */
+      if (sym == XK_BackSpace) {
+	return((uchar) '\007');  /* Backspace -> delete char before cursor */
+      } else if (sym == XK_Delete) {
+	return((uchar) '\005');  /* Delete -> delete char at cursor */
+      }
+      
       /* Check for Escape key */
       if (sym == XK_Escape) {
 	if (debug_esc == -1) {
 	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	}
-	dbglog("[chipmunk] ESC keysym detected (m_inkey fallback) -> ^C");
+	dbglog_inkey("[chipmunk] ESC keysym detected (m_inkey) -> ^C");
 	return((uchar) '\003');
       }
+      
+      /* Handle arrow keys */
       if (sym == XK_Up || sym == XK_KP_Up) {
 	return((uchar) '\037');  /* Up arrow -> scroll up */
       } else if (sym == XK_Down || sym == XK_KP_Down) {
@@ -5355,14 +5461,38 @@ uchar m_inkey()
 	return((uchar) '\b');    /* Left arrow -> scroll left */
       } else if (sym == XK_Right || sym == XK_KP_Right) {
 	return((uchar) '\034');  /* Right arrow -> scroll right */
-      } else if ((event.xkey.state & ControlMask) &&
-                 (sym == XK_c || sym == XK_C)) {
+      }
+      
+      /* Handle Ctrl+C */
+      if ((event.xkey.state & ControlMask) && (sym == XK_c || sym == XK_C)) {
 	if (debug_esc == -1) {
 	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	}
-	dbglog("[chipmunk] Ctrl-C detected (m_inkey) -> ^C");
+	dbglog_inkey("[chipmunk] Ctrl-C detected (m_inkey) -> ^C");
 	return((uchar) '\003');
+      }
+      
+      /* Now try XLookupString for regular characters */
+      if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
+	/* Check if this is an arrow key character (from XRebindKeysym) */
+	if (buf[0] == '\037' || buf[0] == '\n' || buf[0] == '\b' || buf[0] == '\034') {
+	  return((uchar) buf[0]);
+	}
+	/* Check if this is backspace or delete from XRebindKeysym */
+	if (buf[0] == '\007' || buf[0] == '\005') {
+	  return((uchar) buf[0]);
+	}
+	/* Regular character */
+	if ((unsigned char)buf[0] == 27) {
+	  if (debug_esc == -1) {
+	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	  }
+	  dbglog_inkey("[chipmunk] ESC detected at X layer (m_inkey) -> ^C");
+	  return((uchar) '\003');
+	}
+	return((uchar) buf[0]);
       }
       /* If neither XLookupString nor XLookupKeysym worked, continue loop */
     } else if ((event.type == Expose) && (event.xexpose.window == m_window) &&
@@ -5391,37 +5521,100 @@ uchar m_inkey()
   }
 }
 
+/*
+ * ============================================================================
+ * m_inkeyn() - Non-blocking keyboard input function
+ * ============================================================================
+ * 
+ * Checks for keyboard input without blocking. Returns immediately with either
+ * the next character or 0 if no input is available. Used for polling-style
+ * keyboard checking in event loops.
+ *
+ * RETURN VALUE:
+ *   - 0: No keyboard input available
+ *   - Regular characters: ASCII value (32-126)
+ *   - Special keys: Same mappings as m_inkey():
+ *     - Backspace → 0x07, Delete → 0x05, Escape/Ctrl-C → 0x03
+ *     - Arrow keys → scroll codes (0x1F, 0x0A, 0x08, 0x1C)
+ *   - Special events: 250 (Expose), 251 (ConfigureNotify)
+ *
+ * KEY PROCESSING ORDER:
+ *   1. Check keysym for special keys (BackSpace, Delete, Escape, arrows)
+ *   2. Fall back to XLookupString() for regular character input
+ *   3. Event is put back on queue with XPutBackEvent() before returning
+ *
+ * BEHAVIOR:
+ *   - Returns immediately (non-blocking)
+ *   - Uses XCheckMaskEvent() to peek without blocking
+ *   - Puts event back on queue for potential re-processing
+ *   - Processes window resize and expose events during check
+ *
+ * USAGE PATTERN:
+ *   while (!done) {
+ *     if (m_inkeyn()) {
+ *       ch = m_inkey();  // Now get the character
+ *       handle_input(ch);
+ *     }
+ *     // Do other work...
+ *   }
+ *
+ * Or directly:
+ *   if ((ch = m_inkeyn()) != 0) {
+ *     handle_input(ch);
+ *   }
+ *
+ * THREAD SAFETY: Not thread-safe (uses static variables for debug state)
+ *
+ * NOTES:
+ *   - Event is left on queue after check (unlike m_inkey which consumes it)
+ *   - Useful for responsive UI that needs to do work while checking for input
+ *   - Same key mappings as m_inkey() for consistency
+ */
+
+/* 
+ * CROSS-PLATFORM COMPILATION NOTE:
+ * See comment above dbglog_inkey() for explanation of why we use static
+ * file-scope functions instead of nested functions.
+ */
+static void dbglog_inkeyn(const char *msg) {
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  
+  if (debug_esc == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+  
+  if (debug_esc <= 0)
+    return;
+  if (use_file == -1) {
+    const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+    if (p && *p) {
+      strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+      dbgpath[sizeof(dbgpath) - 1] = '\0';
+      use_file = 1;
+    } else {
+      strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+      use_file = 1;
+    }
+  }
+  FILE *f = fopen(dbgpath, "a");
+  if (f) {
+    fputs(msg, f);
+    fputc('\n', f);
+    fclose(f);
+  } else {
+    fprintf(stderr, "%s\n", msg);
+  }
+}
+
 uchar m_inkeyn()
 {
   XEvent event;
   char buf[10];
   KeySym sym;
   static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
-  static int use_file = -1;
-  static char dbgpath[256];
-  auto void dbglog(const char *msg) {
-    if (debug_esc <= 0)
-      return;
-    if (use_file == -1) {
-      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
-      if (p && *p) {
-        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
-        dbgpath[sizeof(dbgpath) - 1] = '\0';
-        use_file = 1;
-      } else {
-        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
-        use_file = 1;
-      }
-    }
-    FILE *f = fopen(dbgpath, "a");
-    if (f) {
-      fputs(msg, f);
-      fputc('\n', f);
-      fclose(f);
-    } else {
-      fprintf(stderr, "%s\n", msg);
-    }
-  }
 
   Kfprintf(stderr, "m_inkeyn()\n");
 
@@ -5436,38 +5629,30 @@ uchar m_inkeyn()
       return(0);
     else {
       if (event.type == KeyPress) {
-	/* First try XLookupString - XRebindKeysym should make arrow keys return scroll codes */
-	if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
-	  /* Check if this is an arrow key character (from XRebindKeysym) */
-	  if (buf[0] == '\037' || buf[0] == '\n' || buf[0] == '\b' || buf[0] == '\034') {
-	    XPutBackEvent(m_display, &event);
-	    return((uchar) buf[0]);
-	  }
-	  /* Regular character */
-	  Xfprintf(stderr, "XPutBackEvent()  (m_inkeyn() Key event)\n");
-	  XPutBackEvent(m_display, &event);
-	  if ((unsigned char)buf[0] == 27) {
-	    if (debug_esc == -1) {
-	      const char *env = getenv("CHIPMUNK_DEBUG_ESC");
-	      debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
-	    }
-	    dbglog("[chipmunk] ESC detected at X layer (m_inkeyn) -> ^C");
-	    return((uchar) '\003');
-	  }
-	  return(buf[0]);
-	}
-	/* If XLookupString returns 0, try XLookupKeysym as fallback for arrow keys and ESC */
+	/* Check keysym first for special keys before XLookupString */
 	sym = XLookupKeysym((XKeyEvent *)&event, 0);
+	
+	/* Handle BackSpace and Delete keys explicitly */
+	if (sym == XK_BackSpace) {
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) '\007');  /* Backspace -> delete char before cursor */
+	} else if (sym == XK_Delete) {
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) '\005');  /* Delete -> delete char at cursor */
+	}
+	
 	/* Check for Escape key */
 	if (sym == XK_Escape) {
 	  if (debug_esc == -1) {
 	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	  }
-	  dbglog("[chipmunk] ESC keysym detected (m_inkeyn fallback) -> ^C");
+	  dbglog_inkeyn("[chipmunk] ESC keysym detected (m_inkeyn) -> ^C");
 	  XPutBackEvent(m_display, &event);
 	  return((uchar) '\003');
 	}
+	
+	/* Handle arrow keys */
 	if (sym == XK_Up || sym == XK_KP_Up) {
 	  XPutBackEvent(m_display, &event);
 	  return((uchar) '\037');  /* Up arrow -> scroll up */
@@ -5480,15 +5665,43 @@ uchar m_inkeyn()
 	} else if (sym == XK_Right || sym == XK_KP_Right) {
 	  XPutBackEvent(m_display, &event);
 	  return((uchar) '\034');  /* Right arrow -> scroll right */
-	} else if ((event.xkey.state & ControlMask) &&
-                   (sym == XK_c || sym == XK_C)) {
+	}
+	
+	/* Handle Ctrl+C */
+	if ((event.xkey.state & ControlMask) && (sym == XK_c || sym == XK_C)) {
 	  XPutBackEvent(m_display, &event);
 	  if (debug_esc == -1) {
 	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	  }
-	  dbglog("[chipmunk] Ctrl-C detected (m_inkeyn) -> ^C");
+	  dbglog_inkeyn("[chipmunk] Ctrl-C detected (m_inkeyn) -> ^C");
 	  return((uchar) '\003');
+	}
+	
+	/* Now try XLookupString for regular characters */
+	if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
+	  /* Check if this is an arrow key character (from XRebindKeysym) */
+	  if (buf[0] == '\037' || buf[0] == '\n' || buf[0] == '\b' || buf[0] == '\034') {
+	    XPutBackEvent(m_display, &event);
+	    return((uchar) buf[0]);
+	  }
+	  /* Check if this is backspace or delete from XRebindKeysym */
+	  if (buf[0] == '\007' || buf[0] == '\005') {
+	    XPutBackEvent(m_display, &event);
+	    return((uchar) buf[0]);
+	  }
+	  /* Regular character */
+	  Xfprintf(stderr, "XPutBackEvent()  (m_inkeyn() Key event)\n");
+	  XPutBackEvent(m_display, &event);
+	  if ((unsigned char)buf[0] == 27) {
+	    if (debug_esc == -1) {
+	      const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	      debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	    }
+	    dbglog_inkeyn("[chipmunk] ESC detected at X layer (m_inkeyn) -> ^C");
+	    return((uchar) '\003');
+	  }
+	  return(buf[0]);
 	}
 	/* If neither worked, put event back and return 0 (no key available) */
 	XPutBackEvent(m_display, &event);
@@ -5514,37 +5727,99 @@ uchar m_inkeyn()
   }
 }
 
+/*
+ * ============================================================================
+ * m_testkey() - Peek at keyboard input without consuming
+ * ============================================================================
+ * 
+ * Checks what keyboard input is available without removing it from the queue.
+ * Similar to m_inkeyn() but explicitly designed for peeking/testing. Returns
+ * immediately with the character code or 0 if no input available.
+ *
+ * RETURN VALUE:
+ *   - 0: No keyboard input available
+ *   - Character code: Same as m_inkey()/m_inkeyn()
+ *     - Regular characters: ASCII value (32-126)
+ *     - Special keys: Backspace (0x07), Delete (0x05), Escape (0x03), arrows
+ *     - Events: 250 (Expose), 251 (ConfigureNotify)
+ *
+ * KEY PROCESSING ORDER:
+ *   1. Check keysym for special keys (BackSpace, Delete, Escape, arrows)
+ *   2. Fall back to XLookupString() for regular character input
+ *   3. Event is put back on queue with XPutBackEvent() before returning
+ *
+ * BEHAVIOR:
+ *   - Non-blocking, returns immediately
+ *   - Does NOT consume the keyboard event (leaves it in queue)
+ *   - Event remains available for subsequent m_inkey() or m_testkey() calls
+ *   - Processes window events (Expose, ConfigureNotify) during check
+ *
+ * DIFFERENCE FROM m_inkeyn():
+ *   - m_testkey(): Explicitly for peek/test operations, event stays in queue
+ *   - m_inkeyn(): Can be used to peek OR consume, behavior similar
+ *   Both functions are non-blocking and put event back, functionally equivalent
+ *
+ * USAGE PATTERN:
+ *   // Check what key is waiting without consuming it
+ *   ch = m_testkey();
+ *   if (ch == '\003') {  // Escape/Cancel
+ *     // User wants to cancel
+ *     m_inkey();  // Now consume it
+ *     return CANCELLED;
+ *   }
+ *
+ * THREAD SAFETY: Not thread-safe (uses static variables for debug state)
+ *
+ * NOTES:
+ *   - Useful for conditional processing based on what key is waiting
+ *   - Must call m_inkey() later to actually consume the event
+ *   - Same special key mappings as m_inkey() and m_inkeyn()
+ */
+
+/* 
+ * CROSS-PLATFORM COMPILATION NOTE:
+ * See comment above dbglog_inkey() for explanation of why we use static
+ * file-scope functions instead of nested functions.
+ */
+static void dbglog_testkey(const char *msg) {
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  
+  if (debug_esc == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+  
+  if (debug_esc <= 0)
+    return;
+  if (use_file == -1) {
+    const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+    if (p && *p) {
+      strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+      dbgpath[sizeof(dbgpath) - 1] = '\0';
+      use_file = 1;
+    } else {
+      strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+      use_file = 1;
+    }
+  }
+  FILE *f = fopen(dbgpath, "a");
+  if (f) {
+    fputs(msg, f);
+    fputc('\n', f);
+    fclose(f);
+  } else {
+    fprintf(stderr, "%s\n", msg);
+  }
+}
+
 uchar m_testkey()
 {
   XEvent event;
   char buf[10];
   KeySym sym;
   static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
-  static int use_file = -1;
-  static char dbgpath[256];
-  auto void dbglog(const char *msg) {
-    if (debug_esc <= 0)
-      return;
-    if (use_file == -1) {
-      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
-      if (p && *p) {
-        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
-        dbgpath[sizeof(dbgpath) - 1] = '\0';
-        use_file = 1;
-      } else {
-        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
-        use_file = 1;
-      }
-    }
-    FILE *f = fopen(dbgpath, "a");
-    if (f) {
-      fputs(msg, f);
-      fputc('\n', f);
-      fclose(f);
-    } else {
-      fprintf(stderr, "%s\n", msg);
-    }
-  }
 
   Kfprintf(stderr, "m_testkey()\n");
 
@@ -5558,38 +5833,30 @@ uchar m_testkey()
                                      StructureNotifyMask, &event))
       return(0);
     if (event.type == KeyPress) {
-      /* First try XLookupString - XRebindKeysym should make arrow keys return scroll codes */
-      if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
-	/* Check if this is an arrow key character (from XRebindKeysym) */
-	if (buf[0] == '\037' || buf[0] == '\n' || buf[0] == '\b' || buf[0] == '\034') {
-	  XPutBackEvent(m_display, &event);
-	  return((uchar) buf[0]);
-	}
-	/* Regular character */
-	Xfprintf(stderr, "XPutBackEvent()  (m_testkey() key event)\n");
-	XPutBackEvent(m_display, &event);
-	if ((unsigned char)buf[0] == 27) {
-	  if (debug_esc == -1) {
-	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
-	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
-	  }
-	  dbglog("[chipmunk] ESC detected at X layer (m_testkey) -> ^C");
-	  return((uchar) '\003');
-	}
-	return(buf[0]);
-      }
-      /* If XLookupString returns 0, try XLookupKeysym as fallback for arrow keys and ESC */
+      /* Check keysym first for special keys before XLookupString */
       sym = XLookupKeysym((XKeyEvent *)&event, 0);
+      
+      /* Handle BackSpace and Delete keys explicitly */
+      if (sym == XK_BackSpace) {
+	XPutBackEvent(m_display, &event);
+	return((uchar) '\007');  /* Backspace -> delete char before cursor */
+      } else if (sym == XK_Delete) {
+	XPutBackEvent(m_display, &event);
+	return((uchar) '\005');  /* Delete -> delete char at cursor */
+      }
+      
       /* Check for Escape key */
       if (sym == XK_Escape) {
 	if (debug_esc == -1) {
 	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	}
-	dbglog("[chipmunk] ESC keysym detected (m_testkey fallback) -> ^C");
+	dbglog_testkey("[chipmunk] ESC keysym detected (m_testkey) -> ^C");
 	XPutBackEvent(m_display, &event);
 	return((uchar) '\003');
       }
+      
+      /* Handle arrow keys */
       if (sym == XK_Up || sym == XK_KP_Up) {
 	XPutBackEvent(m_display, &event);
 	return((uchar) '\037');  /* Up arrow -> scroll up */
@@ -5602,15 +5869,43 @@ uchar m_testkey()
       } else if (sym == XK_Right || sym == XK_KP_Right) {
 	XPutBackEvent(m_display, &event);
 	return((uchar) '\034');  /* Right arrow -> scroll right */
-      } else if ((event.xkey.state & ControlMask) &&
-                 (sym == XK_c || sym == XK_C)) {
+      }
+      
+      /* Handle Ctrl+C */
+      if ((event.xkey.state & ControlMask) && (sym == XK_c || sym == XK_C)) {
 	XPutBackEvent(m_display, &event);
 	if (debug_esc == -1) {
 	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
 	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
 	}
-	dbglog("[chipmunk] Ctrl-C detected (m_testkey) -> ^C");
+	dbglog_testkey("[chipmunk] Ctrl-C detected (m_testkey) -> ^C");
 	return((uchar) '\003');
+      }
+      
+      /* Now try XLookupString for regular characters */
+      if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
+	/* Check if this is an arrow key character (from XRebindKeysym) */
+	if (buf[0] == '\037' || buf[0] == '\n' || buf[0] == '\b' || buf[0] == '\034') {
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) buf[0]);
+	}
+	/* Check if this is backspace or delete from XRebindKeysym */
+	if (buf[0] == '\007' || buf[0] == '\005') {
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) buf[0]);
+	}
+	/* Regular character */
+	Xfprintf(stderr, "XPutBackEvent()  (m_testkey() key event)\n");
+	XPutBackEvent(m_display, &event);
+	if ((unsigned char)buf[0] == 27) {
+	  if (debug_esc == -1) {
+	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	  }
+	  dbglog_testkey("[chipmunk] ESC detected at X layer (m_testkey) -> ^C");
+	  return((uchar) '\003');
+	}
+	return(buf[0]);
       }
     } else if ((event.type == Expose) &&
 	       (event.xexpose.window == m_window) &&
