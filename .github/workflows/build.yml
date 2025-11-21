@@ -10,6 +10,11 @@ on:
   release:
     types: [created, published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name for release (e.g., v6.3.0)'
+        required: true
+        type: string
 
 jobs:
   build:
@@ -32,6 +37,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Install macOS dependencies
         if: matrix.os == 'macos'
@@ -97,7 +104,17 @@ jobs:
       - name: Create distribution package
         run: |
           mkdir -p dist
-          tar -czf dist/${{ matrix.artifact }}.tar.gz bin/ log/lib/ lib/ lessons/
+          # Create a temporary directory with the artifact name as root
+          TMPDIR=$(mktemp -d)
+          RELEASE_DIR="${TMPDIR}/${{ matrix.artifact }}"
+          mkdir -p "${RELEASE_DIR}"
+          # Copy files into the release directory
+          cp -r bin/ log/lib/ lib/ lessons/ "${RELEASE_DIR}/" 2>/dev/null || true
+          # Create tarball from the temp directory so it includes the artifact name folder
+          cd "${TMPDIR}"
+          tar -czf "${GITHUB_WORKSPACE}/dist/${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}"
+          # Cleanup
+          rm -rf "${TMPDIR}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -110,7 +127,7 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Download artifacts
@@ -122,5 +139,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: ./artifacts/**/*.tar.gz
+          tag_name: ${{ github.event.inputs.tag || github.ref_name || github.event.release.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
