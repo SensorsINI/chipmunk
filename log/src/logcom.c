@@ -502,7 +502,10 @@ log_action *act_;
 	  } else
 	    timeinfo[i].y = -1;
 	}
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
 	WITH->actgate->vars = (na_long)(V.y * 2);
+#pragma GCC diagnostic pop
       }
       V.x = 0;
       V.y = 0;

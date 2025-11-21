@@ -50,13 +50,26 @@ LOCINC = ../include
 ## XINCLUDEDIR = /usr/X11/include
 ##
 ## For OS X, this usually works:
-## 
+##
 ## XINCLUDEDIR = /usr/X11R6/include
 ##
 ## For most versions of UNIX, one of the above directories
 ## will be the correct one to use on the line below:
 
-XINCLUDEDIR = . 
+# Detect macOS and set X11 paths accordingly
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  # macOS: Use XQuartz paths and native ar/ranlib for Mach-O compatibility
+  # Note: Must use Apple's ar/ranlib as GNU binutils creates incompatible archives
+  XINCLUDEDIR = /opt/X11/include
+  AR = /usr/bin/ar
+  RANLIB = /usr/bin/ranlib
+else
+  # Linux/Other: Use default
+  XINCLUDEDIR = .
+  AR = ar
+  RANLIB = ranlib
+endif
 
 
 ##
@@ -88,8 +101,15 @@ XINCLUDEDIR = .
 ##
 ## For AmigaOS, ADE (Amiga Development Enviroment) with gcc is recommended.
 ##
+## Note: -Wno-format-overflow and -Wno-stringop-overflow suppress warnings from
+## legacy 1980s code. These warnings are expected and would require extensive
+## code refactoring to fix, which is not practical for this historical codebase.
 
-CHIPMUNKCC = gcc -g
+# Use GCC with warning suppression
+# Note: CC comes from environment (e.g., CC=/opt/homebrew/bin/gcc-<version>)
+# Use := for immediate expansion to capture the environment CC before we override it
+BASE_CC := $(CC)
+CHIPMUNKCC = $(BASE_CC) -g -Wno-format-overflow -Wno-stringop-overflow
 
 OBJS = sysdevs.o \
        markrelease.o \
@@ -120,7 +140,7 @@ OBJS = sysdevs.o \
 
 LIBSTUFF = texstuff.ps untilstuff.ps plot.font
 
-
+# Use CHIPMUNKCC for compilation (inherits CC from environment)
 CC = $(CHIPMUNKCC)
 
 
@@ -162,21 +182,21 @@ FONTS =
 ##
 ## Add these flags to the CHIPMUNKFLAGS below:
 ##
-## Linux/86                     -m32 -DBSD -Dlinux -DF_OK=0 
+## Linux/86                     -m32 -DBSD -Dlinux -DF_OK=0
 ## Apple OS X                   -m32 -DBSD -Dlinux -Dfreebsd
-## FreeBSD                      -m32 -DBSD -Dfreebsd -Dlinux -DF_OK=0 
+## FreeBSD                      -m32 -DBSD -Dfreebsd -Dlinux -DF_OK=0
 ##
 ## The platforms below are legacy, these flags may no longer be sufficient.
 ##
-## Solaris 2.X                      -Daux -Dsolaris 
+## Solaris 2.X                      -Daux -Dsolaris
 ## Solaris 1.X (SunOS)              -DBSD
 ## HP series 800 (gcc)
 ## HP series 800 (cc)                -w -Aa -D_HPUX_SOURCE -DF_OK=0
 ## IBM RS/6000 (xlc)                 -DBSD=0 -Drs6000 -D_POSIX_SOURCE
 ## Apple AU/X                        -Daux
-## Apple MachTen                     -DBSD -DF_OK=0  
+## Apple MachTen                     -DBSD -DF_OK=0
 ## DEC Alpha (Linux or OSF)          -DBSD -Dlinux -DF_OK=0 -D__GCC__
-## SGI Irix 5.2/5,3                  -ansi 
+## SGI Irix 5.2/5,3                  -ansi
 ## AmigaOS (gcc)                     -ansi -DBSD -DF_OK=0
 ##
 ## In addition, very old systems whose compilers do not support <stdarg.h>
@@ -192,7 +212,15 @@ FONTS =
 ##   -m68040              : for 68040 and 68060
 ##
 
-CHIPMUNKFLAGS = -m64 -DBSD -Dlinux -DF_OK=0 -D__alpha__
+ifeq ($(UNAME_S),Darwin)
+  # macOS: Modern macOS only supports 64-bit, using freebsd compatibility flags
+  # Note: -D__alpha__ is REQUIRED to ensure filerec union uses int[64] (256 bytes)
+  # instead of long[64] (512 bytes), matching the binary .gate file format
+  CHIPMUNKFLAGS = -m64 -DBSD -Dlinux -Dfreebsd -D__alpha__
+else
+  # Linux: Default to 64-bit Linux/Alpha configuration
+  CHIPMUNKFLAGS = -m64 -DBSD -Dlinux -DF_OK=0 -D__alpha__
+endif
 
 CFLAGS = $(CHIPMUNKFLAGS) $(FONTS) -I$(LOCINC) -I$(XINCLUDEDIR) -DCHIPLIB=\"`$(CD) $(LIBDIR); pwd`\"
 
@@ -206,7 +234,7 @@ P2CFLAGS = -DLOCAL_INIT=_local_p2c_init
 ## For Apple Macintosh OS X, add the -c flag to CHIPMUNKRANFLAGS below.
 ##
 
-CHIPMUNKRANFLAGS = 
+CHIPMUNKRANFLAGS =
 
 ## for systems without ranlib, you may wish to delete the lines:
 ##
@@ -224,21 +252,21 @@ setup:
 
 install: setup all
 	cp libp2c.a $(LIB)
-	-ranlib $(CHIPMUNKRANFLAGS) -t $(LIB)
+	-$(RANLIB) $(CHIPMUNKRANFLAGS) -t $(LIB)
 	cp $(LIBSTUFF) $(LIBDIR)
 	-if [ ! -d $(BINDIR) ] ; then mkdir $(BINDIR) ; fi
 
 libp2c.a: $(OBJS)
 	-rm -f libp2c.a
-	ar r libp2c.a $(OBJS)
-	-ranlib $(CHIPMUNKRANFLAGS) libp2c.a
+	$(AR) r libp2c.a $(OBJS)
+	-$(RANLIB) $(CHIPMUNKRANFLAGS) libp2c.a
 
 p2clib.o: p2clib.c
 	$(CC) -c $(CFLAGS) $(P2CFLAGS) p2clib.c
 
 clean:
 	-rm -f *.o libp2c.a ../libp2c.a
- 
+
 ## The following part of the Makefile is for making a tar file of the
 ## original parts of the psys distribution. Most users have no need for it.
 
@@ -331,11 +359,3 @@ psyssrc:
 	sed -e "s;1.61;$(VERSION);" Makefile >psys/src/Makefile
 	sed -e "s;1.61;$(VERSION);" Makefile.os2 >psys/src/Makefile.os2
 	cp COPYING psys/src/COPYING
-
-
-
-
-
-
-
-

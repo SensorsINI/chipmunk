@@ -162,11 +162,11 @@ void m_unclip()
 }
 
 
-void m_setfont()
+void m_setfont(void *font)
 {
 }
 
-void m_seefont()
+void m_seefont(void *font)
 {
 }
 

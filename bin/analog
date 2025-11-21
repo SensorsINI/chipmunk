@@ -29,17 +29,26 @@ if [ "$1" = "--help" ] || ([ "$1" = "-h" ] && [ -z "$2" ]); then
     exit 0
 fi
 
+# Process arguments to handle paths correctly after cd to log/lib
+declare -a ARGS=()
+for arg in "$@"; do
+    # Check if this looks like a file path
+    if [ -f "$arg" ]; then
+        # Get just the filename, assuming files should be in log/lib
+        ARGS+=("$(basename "$arg")")
+    else
+        # Keep other arguments as-is (like -v, -x, etc.)
+        ARGS+=("$arg")
+    fi
+done
+
+# Change to log/lib directory so relative paths in config files work
+cd "${CHIPMUNK_DIR}/log/lib"
+
 # If no arguments provided, open lesson1.lgf for first-time users
 if [ $# -eq 0 ]; then
-    LESSON_FILE="${CHIPMUNK_DIR}/log/lib/lesson1.lgf"
-    if [ -f "$LESSON_FILE" ]; then
-        exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf "$LESSON_FILE"
-    else
-        # If lesson file doesn't exist, just start normally
-        exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf
-    fi
+    exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf lesson1.lgf
 else
     # Use -c option to explicitly load analog.cnf configuration
-    # This ensures analog mode is used even if the binary is called diglog
-    exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf "$@"
+    exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf "${ARGS[@]}"
 fi

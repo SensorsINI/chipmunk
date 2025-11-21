@@ -94,7 +94,7 @@ log_grec *Inst;
 boolean erase;
 {
   short Lx, Ly, Wx, Wy;
-  void drawnum3();
+  void drawnum3(short x, short y, short n);
   long oldWx,oldWy,oldLx,oldLy;
   int W,L;
   float scale;

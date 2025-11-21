@@ -3,6 +3,100 @@
 
 /* #define ENABLE_DEBUGGING */
 
+/*
+ * ============================================================================
+ * X11 EVENT HANDLING AND WINDOW MANAGEMENT DOCUMENTATION
+ * ============================================================================
+ *
+ * KEY INPUT FUNCTIONS:
+ * -------------------
+ * - m_inkey(): Blocking keyboard input, returns one character
+ * - m_inkeyn(): Non-blocking keyboard input (returns immediately)
+ * - m_testkey(): Peeks at keyboard without consuming the character
+ * - m_pollkbd(): Checks if keyboard input is available (non-blocking)
+ *
+ * All of these functions:
+ * - Process X11 KeyPress events
+ * - Handle ConfigureNotify events (window resize)
+ * - Map Escape key (XK_Escape, ASCII 27) to '\003' (Ctrl-C) for mode exit
+ * - Map Ctrl+C to '\003' for consistency
+ * - Update window dimensions when resized via update_window_size()
+ *
+ * MOUSE/PEN INPUT:
+ * ---------------
+ * - m_readpen(pen): Gets mouse position and button state
+ *   - pen->x, pen->y: Mouse coordinates in pixels
+ *   - pen->dn: True if left button is down
+ *   - pen->depressed: True while button held
+ *   - pen->near_: True if mouse is near previous position
+ *   - pen->moving: True if mouse moved since last call
+ *   - pen->off: True if mouse is outside window
+ *
+ * FOCUS MANAGEMENT:
+ * ----------------
+ * - FocusIn events set ignore_next_left_click flag
+ * - First left-click after gaining focus is ignored to prevent accidental actions
+ * - This prevents unintended wire-drawing when clicking to bring window into focus
+ *
+ * WINDOW GEOMETRY PERSISTENCE:
+ * ---------------------------
+ * Window size is saved to ~/.chipmunk and restored on next launch:
+ * - Format: "window_width=WIDTH\nwindow_height=HEIGHT" in preferences file
+ * - Saved on normal exit via m_save_window_geometry()
+ * - Loaded at startup in WindowInitialize()
+ * - Default size: 1280x960+0+0 (if no saved geometry exists)
+ * - Size is clamped to reasonable range (400x300 minimum, screen size maximum)
+ *
+ * X11 EVENT MASKS:
+ * ---------------
+ * Window listens for these X11 events (WindowEventMask):
+ * - KeyPressMask: Keyboard input
+ * - ButtonPressMask, ButtonReleaseMask: Mouse button clicks
+ * - PointerMotionMask: Mouse movement
+ * - ExposureMask: Window redraw requests
+ * - StructureNotifyMask: Window resize/move (ConfigureNotify)
+ * - FocusChangeMask: Window focus in/out (for click-to-focus handling)
+ *
+ * KEY VARIABLES:
+ * -------------
+ * - m_display: X11 display connection
+ * - m_window: Main application window handle
+ * - m_across, m_down: Current window dimensions in pixels
+ * - last_window_width, last_window_height: Saved dimensions for persistence
+ * - ignore_next_left_click: Flag to ignore first click after focus (static in m_readpen)
+ *
+ * WINDOW RESIZE HANDLING:
+ * ----------------------
+ * When ConfigureNotify event is received:
+ * 1. update_window_size() is called to update m_across, m_down
+ * 2. last_window_width, last_window_height are updated for saving
+ * 3. Application (log.c) receives notification via special return values
+ * 4. Application can adjust viewport and redraw as needed
+ *
+ * KEYBOARD EVENT MAPPING:
+ * ----------------------
+ * Special keys are mapped for consistency:
+ * - XK_Escape (key symbol 65307) → '\003' (ASCII 3, Ctrl-C/EXEC)
+ * - Ctrl+C (ControlMask + 'c') → '\003'
+ * - Allows both Escape and Ctrl-C to exit modes consistently
+ *
+ * DEBUG SUPPORT:
+ * -------------
+ * Set environment variables for debugging:
+ * - CHIPMUNK_DEBUG_ESC=1: Enables debug logging for Escape/Ctrl-C detection
+ * - CHIPMUNK_DEBUG_ESC_FILE=/path: Redirects debug to file instead of stderr
+ * - Debug output shows key events, focus changes, and button presses
+ *
+ * IMPORTANT NOTES:
+ * ---------------
+ * - X11 coordinates have origin (0,0) at top-left corner
+ * - Circuit coordinates (in log.c) use different origin (16384)
+ * - Coordinate conversion happens in log.c, not in mylib.c
+ * - This file only deals with raw X11 pixel coordinates
+ *
+ * ============================================================================
+ */
+
 /* Trying to speed up graphics */
 #define SAVECURSOR
 #undef EXTRA_BUFFERING
@@ -100,6 +194,10 @@ static int show_all_mylib_calls,
 	   show_pen_calls,
 	   show_key_calls,
 	   sync_all_calls;
+
+/* Static variables to track last known good window size for geometry persistence */
+static unsigned int last_window_width = 0;
+static unsigned int last_window_height = 0;
 
 static void init_debug_flags()
 {
@@ -385,7 +483,7 @@ static long WindowEventMask = ExposureMask | KeyPressMask |
                               ButtonPressMask | ButtonReleaseMask |
                               PointerMotionMask | StructureNotifyMask |
                               EnterWindowMask | LeaveWindowMask |
-			      OwnerGrabButtonMask;
+			      OwnerGrabButtonMask | FocusChangeMask;
 
 static unsigned long WinAttrMask =
     CWBackPixel | CWBorderPixel | CWEventMask | GCForeground | GCBackground;
@@ -916,12 +1014,47 @@ void WindowInitialize()
   Pixmap p;
   GC tempgc;
   XEvent event;
-  char *usrgeo,*defgeo = {"512x390+0+0"};
+  char *usrgeo,*defgeo = {"1280x960+0+0"};  /* Default window size - can be overridden with -geometry or X resources */
   int  WinX, WinY, x_pad, y_pad;
   int WinW, WinH;
+  char saved_geo[256];
+  FILE *geo_file;
+  char *home;
 
 
   root = DefaultRootWindow(m_display);
+  
+  /* Try to load saved geometry from ~/.chipmunk */
+  home = getenv("HOME");
+  if (home != NULL) {
+    int saved_width = 0, saved_height = 0;
+    snprintf(saved_geo, sizeof(saved_geo), "%s/.chipmunk", home);
+    geo_file = fopen(saved_geo, "r");
+    if (geo_file != NULL) {
+      char line[256];
+      while (fgets(line, sizeof(line), geo_file) != NULL) {
+        /* Remove trailing newline */
+        line[strcspn(line, "\r\n")] = '\0';
+        /* Skip comments and empty lines */
+        if (line[0] == '#' || line[0] == '\0')
+          continue;
+        /* Parse key=value pairs */
+        if (strncmp(line, "window_width=", 13) == 0) {
+          saved_width = atoi(line + 13);
+        } else if (strncmp(line, "window_height=", 14) == 0) {
+          saved_height = atoi(line + 14);
+        }
+      }
+      fclose(geo_file);
+      /* If valid dimensions were found, create geometry string */
+      if (saved_width > 400 && saved_height > 300 && 
+          saved_width <= 3840 && saved_height <= 2160) {
+        static char geo_buf[64];
+        snprintf(geo_buf, sizeof(geo_buf), "%dx%d+0+0", saved_width, saved_height);
+        defgeo = geo_buf;
+      }
+    }
+  }
 
   WinAttr.background_pixel = m_colors[m_black]->pixel;
   WinAttr.border_pixel = WhitePixel(m_display, DefaultScreen(m_display));
@@ -1010,6 +1143,10 @@ void WindowInitialize()
 
   Xfprintf(stderr, "XMapWindow()\n");
   XMapWindow(m_display, m_window);
+
+  /* Initialize window size tracking for geometry save */
+  last_window_width = WinW;
+  last_window_height = WinH;
 
   for (i = 0; i < ColorsInSet; i++) {
     Xfprintf(stderr, "gc[%d] = XCreateGC()\n", i);
@@ -1540,6 +1677,17 @@ void m_init_pen(hpib_address)
 int hpib_address;
 {
   Mfprintf(stderr, "m_init_pen(%d)\n", hpib_address);
+}
+
+/* Set the window title - used to update with filename */
+void m_set_window_title(title)
+const char *title;
+{
+  if (m_display && m_window) {
+    XStoreName(m_display, m_window, title);
+    XSetIconName(m_display, m_window, title);
+    XFlush(m_display);
+  }
 }
 
 void m_version(version)
@@ -3937,7 +4085,7 @@ static XPoint bezbuf[2048];
 static int bezbufp;
 static int bezthresh;
 
-int hitdet_bezier(x1, y1, x2, y2, x3, y3, x4, y4)
+int hitdet_bezier(int x1, int y1, int x2, int y2, int x3, int y3, int x4, int y4)
 {
   int minx, maxx, miny, maxy;
 
@@ -4651,9 +4799,83 @@ m_picturevar *p;
 
 /* This function raises the graphics window above the alpha window */
 
+/* Save current window geometry for next session - public so can be called before exit */
+void m_save_window_geometry()
+{
+  char *home;
+  char prefs_path[512];
+  char temp_path[512];
+  FILE *old_file, *new_file;
+  char line[512];
+  int found_width = 0, found_height = 0;
+  
+  home = getenv("HOME");
+  if (home == NULL || last_window_width == 0 || last_window_height == 0)
+    return;
+    
+  /* Validate reasonable size (not too small, not bigger than 4K screen) */
+  if (last_window_width < 400 || last_window_height < 300 || 
+      last_window_width > 3840 || last_window_height > 2160)
+    return;
+    
+  /* Update ~/.chipmunk with new geometry while preserving other settings */
+  snprintf(prefs_path, sizeof(prefs_path), "%s/.chipmunk", home);
+  snprintf(temp_path, sizeof(temp_path), "%s/.chipmunk.tmp", home);
+  
+  new_file = fopen(temp_path, "w");
+  if (new_file == NULL)
+    return;
+  
+  /* Copy existing preferences, updating geometry lines */
+  old_file = fopen(prefs_path, "r");
+  if (old_file != NULL) {
+    while (fgets(line, sizeof(line), old_file) != NULL) {
+      if (strncmp(line, "window_width=", 13) == 0) {
+        fprintf(new_file, "window_width=%d\n", last_window_width);
+        found_width = 1;
+      } else if (strncmp(line, "window_height=", 14) == 0) {
+        fprintf(new_file, "window_height=%d\n", last_window_height);
+        found_height = 1;
+      } else {
+        fputs(line, new_file);
+      }
+    }
+    fclose(old_file);
+  } else {
+    /* No existing file, create header */
+    fprintf(new_file, "# Chipmunk preferences file\n");
+    fprintf(new_file, "# Automatically generated - do not edit manually\n\n");
+  }
+  
+  /* Add geometry if not already present */
+  if (!found_width)
+    fprintf(new_file, "window_width=%d\n", last_window_width);
+  if (!found_height)
+    fprintf(new_file, "window_height=%d\n", last_window_height);
+  
+  fclose(new_file);
+  
+  /* Replace old file with new file */
+  rename(temp_path, prefs_path);
+}
+
+/* Update tracked window size - called from ConfigureNotify handlers */
+static void update_window_size(unsigned int width, unsigned int height)
+{
+  last_window_width = width;
+  last_window_height = height;
+}
+
 void m_graphics_on()
 {
   XWindowChanges  changes;
+  static int geometry_save_registered = 0;
+
+  /* Register geometry save on first call */
+  if (!geometry_save_registered) {
+    atexit(m_save_window_geometry);
+    geometry_save_registered = 1;
+  }
 
   if (m_autoraise)
     {
@@ -4689,12 +4911,25 @@ m_tablet_info *pen;
   XEvent event;
   int newx, newy;
   int gotevent, found = 0, giveup = 0;
+  static int ignore_next_left_click = 0;  /* Counter: ignore left-clicks until this reaches 0 */
 
   Pfprintf(stderr, "m_readpen(pen)\n");
 
 #ifdef EXTRA_BUFFERING
   flush_buffers();
 #endif /* EXTRA_BUFFERING */
+  
+  /* Check for FocusIn events to detect window activation */
+  while (XCheckMaskEvent(m_display, FocusChangeMask, &event)) {
+    if (event.type == FocusIn && event.xfocus.window == m_window) {
+      /* Set to ignore the next left-click */
+      ignore_next_left_click = 1;
+    } else if (event.type == FocusOut && event.xfocus.window == m_window) {
+      /* Reset on focus out */
+      ignore_next_left_click = 0;
+    }
+  }
+  
   while (1) {
     Xfprintf(stderr, "XCheckMaskEvent()\n");
     gotevent = XCheckMaskEvent(m_display, ButtonPressMask | PointerMotionMask |
@@ -4711,11 +4946,22 @@ m_tablet_info *pen;
 
   if (found) {
     if (event.type == ButtonPress) {
-      pen->dn = (event.xbutton.button == Button1);
-      pen->depressed = (event.xbutton.state & Button1Mask) || pen->dn;
-      pen->up = 0;
-      pen->near_ = ! (event.xbutton.state & Button3Mask) &&
-    	          ! (event.xbutton.button == Button3);
+      /* Ignore first left-click after window focus to prevent accidental wire-drawing */
+      if (ignore_next_left_click && event.xbutton.button == Button1) {
+        ignore_next_left_click = 0;  /* Clear flag after ignoring */
+        /* Act as if no event occurred */
+        found = 0;
+      } else {
+        /* Any other button press clears the ignore flag */
+        if (event.xbutton.button != Button1) {
+          ignore_next_left_click = 0;
+        }
+        pen->dn = (event.xbutton.button == Button1);
+        pen->depressed = (event.xbutton.state & Button1Mask) || pen->dn;
+        pen->up = 0;
+        pen->near_ = ! (event.xbutton.state & Button3Mask) &&
+    	            ! (event.xbutton.button == Button3);
+      }
     } else if (event.type == ButtonRelease) {
       pen->dn = 0;
       pen->up = (event.xbutton.button == Button1);
@@ -4963,8 +5209,20 @@ boolean m_pollkbd()
                  /* but may be too drastic (MDG)                          */
     switch (event.type) {
     case KeyPress: 
+      /* Check for arrow keys via KeySym first - XLookupString may return 0 for them */
+      sym = XLookupKeysym((XKeyEvent *)&event, 0);
+      if (sym == XK_Up || sym == XK_KP_Up || sym == XK_Down || sym == XK_KP_Down ||
+	  sym == XK_Left || sym == XK_KP_Left || sym == XK_Right || sym == XK_KP_Right) {
+	XPutBackEvent(m_display, &event);
+	return(1);
+      }
       if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
 	Xfprintf(stderr, "XPutBackEvent()  (m_pollkbd() Key event)\n");
+	XPutBackEvent(m_display, &event);
+	return(1);
+      } else {
+	/* Even if XLookupString fails, if it's a keypress, we should return true */
+	/* This handles keys that don't have string representations (like arrow keys) */
 	XPutBackEvent(m_display, &event);
 	return(1);
       }
@@ -4985,6 +5243,7 @@ boolean m_pollkbd()
       if ((event.xconfigure.window == m_window) &&
 	  ((event.xconfigure.width != m_across+1) ||
 	   (event.xconfigure.height != m_down+1))) {
+	update_window_size(event.xconfigure.width, event.xconfigure.height);
 	Xfprintf(stderr, "XPutBackEvent()  (m_pollkbd() resize event)\n");
 	XPutBackEvent(m_display, &event);
 	return(1);
@@ -5019,6 +5278,32 @@ uchar m_inkey()
   XEvent event;
   char buf[10];
   KeySym sym;
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  auto void dbglog(const char *msg) {
+    if (debug_esc <= 0)
+      return;
+    if (use_file == -1) {
+      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+      if (p && *p) {
+        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+        dbgpath[sizeof(dbgpath) - 1] = '\0';
+        use_file = 1;
+      } else {
+        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+        use_file = 1;
+      }
+    }
+    FILE *f = fopen(dbgpath, "a");
+    if (f) {
+      fputs(msg, f);
+      fputc('\n', f);
+      fclose(f);
+    } else {
+      fprintf(stderr, "%s\n", msg);
+    }
+  }
 
   Kfprintf(stderr, "m_inkey()\n");
 
@@ -5033,8 +5318,53 @@ uchar m_inkey()
                           StructureNotifyMask, &event);
     nc_cursor_off();
     if (event.type == KeyPress) {
-      if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL))
-	return(buf[0]);
+      /* First try XLookupString - XRebindKeysym should make arrow keys return scroll codes */
+      if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
+	/* Check if this is an arrow key character (from XRebindKeysym) */
+	if (buf[0] == '\037' || buf[0] == '\n' || buf[0] == '\b' || buf[0] == '\034') {
+	  return((uchar) buf[0]);
+	}
+	/* Regular character */
+	if ((unsigned char)buf[0] == 27) {
+	  if (debug_esc == -1) {
+	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	  }
+	  dbglog("[chipmunk] ESC detected at X layer (m_inkey) -> ^C");
+	  return((uchar) '\003');
+	}
+	return((uchar) buf[0]);
+      }
+      /* If XLookupString returns 0, try XLookupKeysym as fallback for arrow keys and ESC */
+      /* This handles cases where XRebindKeysym didn't work or the key isn't rebound */
+      sym = XLookupKeysym((XKeyEvent *)&event, 0);
+      /* Check for Escape key */
+      if (sym == XK_Escape) {
+	if (debug_esc == -1) {
+	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	}
+	dbglog("[chipmunk] ESC keysym detected (m_inkey fallback) -> ^C");
+	return((uchar) '\003');
+      }
+      if (sym == XK_Up || sym == XK_KP_Up) {
+	return((uchar) '\037');  /* Up arrow -> scroll up */
+      } else if (sym == XK_Down || sym == XK_KP_Down) {
+	return((uchar) '\n');    /* Down arrow -> scroll down */
+      } else if (sym == XK_Left || sym == XK_KP_Left) {
+	return((uchar) '\b');    /* Left arrow -> scroll left */
+      } else if (sym == XK_Right || sym == XK_KP_Right) {
+	return((uchar) '\034');  /* Right arrow -> scroll right */
+      } else if ((event.xkey.state & ControlMask) &&
+                 (sym == XK_c || sym == XK_C)) {
+	if (debug_esc == -1) {
+	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	}
+	dbglog("[chipmunk] Ctrl-C detected (m_inkey) -> ^C");
+	return((uchar) '\003');
+      }
+      /* If neither XLookupString nor XLookupKeysym worked, continue loop */
     } else if ((event.type == Expose) && (event.xexpose.window == m_window) &&
 	       (event.xexpose.count == 0)) {
 #ifdef SHOW_EXPOSE_EVENTS
@@ -5050,6 +5380,7 @@ uchar m_inkey()
 	       (event.xconfigure.window == m_window) &&
 	       ((event.xconfigure.width != m_across+1) ||
 		(event.xconfigure.height != m_down+1))) {
+      update_window_size(event.xconfigure.width, event.xconfigure.height);
 #ifdef SHOW_CONFIGURE_EVENTS
       fprintf(stderr, "m_inkey(): ConfigureNotify event detected\n");
 #endif /*SHOW_CONFIGURE_EVENTS*/
@@ -5065,6 +5396,32 @@ uchar m_inkeyn()
   XEvent event;
   char buf[10];
   KeySym sym;
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  auto void dbglog(const char *msg) {
+    if (debug_esc <= 0)
+      return;
+    if (use_file == -1) {
+      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+      if (p && *p) {
+        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+        dbgpath[sizeof(dbgpath) - 1] = '\0';
+        use_file = 1;
+      } else {
+        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+        use_file = 1;
+      }
+    }
+    FILE *f = fopen(dbgpath, "a");
+    if (f) {
+      fputs(msg, f);
+      fputc('\n', f);
+      fclose(f);
+    } else {
+      fprintf(stderr, "%s\n", msg);
+    }
+  }
 
   Kfprintf(stderr, "m_inkeyn()\n");
 
@@ -5079,11 +5436,63 @@ uchar m_inkeyn()
       return(0);
     else {
       if (event.type == KeyPress) {
+	/* First try XLookupString - XRebindKeysym should make arrow keys return scroll codes */
 	if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
+	  /* Check if this is an arrow key character (from XRebindKeysym) */
+	  if (buf[0] == '\037' || buf[0] == '\n' || buf[0] == '\b' || buf[0] == '\034') {
+	    XPutBackEvent(m_display, &event);
+	    return((uchar) buf[0]);
+	  }
+	  /* Regular character */
 	  Xfprintf(stderr, "XPutBackEvent()  (m_inkeyn() Key event)\n");
 	  XPutBackEvent(m_display, &event);
-	  return(buf[0]);
+	  if ((unsigned char)buf[0] == 27) {
+	    if (debug_esc == -1) {
+	      const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	      debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	    }
+	    dbglog("[chipmunk] ESC detected at X layer (m_inkeyn) -> ^C");
+	    return((uchar) '\003');
 	  }
+	  return(buf[0]);
+	}
+	/* If XLookupString returns 0, try XLookupKeysym as fallback for arrow keys and ESC */
+	sym = XLookupKeysym((XKeyEvent *)&event, 0);
+	/* Check for Escape key */
+	if (sym == XK_Escape) {
+	  if (debug_esc == -1) {
+	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	  }
+	  dbglog("[chipmunk] ESC keysym detected (m_inkeyn fallback) -> ^C");
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) '\003');
+	}
+	if (sym == XK_Up || sym == XK_KP_Up) {
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) '\037');  /* Up arrow -> scroll up */
+	} else if (sym == XK_Down || sym == XK_KP_Down) {
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) '\n');    /* Down arrow -> scroll down */
+	} else if (sym == XK_Left || sym == XK_KP_Left) {
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) '\b');    /* Left arrow -> scroll left */
+	} else if (sym == XK_Right || sym == XK_KP_Right) {
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) '\034');  /* Right arrow -> scroll right */
+	} else if ((event.xkey.state & ControlMask) &&
+                   (sym == XK_c || sym == XK_C)) {
+	  XPutBackEvent(m_display, &event);
+	  if (debug_esc == -1) {
+	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	  }
+	  dbglog("[chipmunk] Ctrl-C detected (m_inkeyn) -> ^C");
+	  return((uchar) '\003');
+	}
+	/* If neither worked, put event back and return 0 (no key available) */
+	XPutBackEvent(m_display, &event);
+	return(0);
       } else if ((event.type == Expose) && 
 		 (event.xexpose.window == m_window) &&
 		 (event.xexpose.count == 0)) {
@@ -5094,6 +5503,7 @@ uchar m_inkeyn()
 		 (event.xconfigure.window == m_window) &&
 		 ((event.xconfigure.width != m_across+1) ||
 		  (event.xconfigure.height != m_down+1))) {
+	update_window_size(event.xconfigure.width, event.xconfigure.height);
 	m_across = event.xconfigure.width - 1;
 	m_down = event.xconfigure.height - 1;
 	Xfprintf(stderr, "XPutBackEvent()  (m_inkeyn() resize event)\n");
@@ -5109,6 +5519,32 @@ uchar m_testkey()
   XEvent event;
   char buf[10];
   KeySym sym;
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  auto void dbglog(const char *msg) {
+    if (debug_esc <= 0)
+      return;
+    if (use_file == -1) {
+      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+      if (p && *p) {
+        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+        dbgpath[sizeof(dbgpath) - 1] = '\0';
+        use_file = 1;
+      } else {
+        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+        use_file = 1;
+      }
+    }
+    FILE *f = fopen(dbgpath, "a");
+    if (f) {
+      fputs(msg, f);
+      fputc('\n', f);
+      fclose(f);
+    } else {
+      fprintf(stderr, "%s\n", msg);
+    }
+  }
 
   Kfprintf(stderr, "m_testkey()\n");
 
@@ -5122,10 +5558,59 @@ uchar m_testkey()
                                      StructureNotifyMask, &event))
       return(0);
     if (event.type == KeyPress) {
+      /* First try XLookupString - XRebindKeysym should make arrow keys return scroll codes */
       if (XLookupString((XKeyEvent *)&event, buf, 10, &sym, NULL)) {
+	/* Check if this is an arrow key character (from XRebindKeysym) */
+	if (buf[0] == '\037' || buf[0] == '\n' || buf[0] == '\b' || buf[0] == '\034') {
+	  XPutBackEvent(m_display, &event);
+	  return((uchar) buf[0]);
+	}
+	/* Regular character */
 	Xfprintf(stderr, "XPutBackEvent()  (m_testkey() key event)\n");
 	XPutBackEvent(m_display, &event);
+	if ((unsigned char)buf[0] == 27) {
+	  if (debug_esc == -1) {
+	    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	  }
+	  dbglog("[chipmunk] ESC detected at X layer (m_testkey) -> ^C");
+	  return((uchar) '\003');
+	}
 	return(buf[0]);
+      }
+      /* If XLookupString returns 0, try XLookupKeysym as fallback for arrow keys and ESC */
+      sym = XLookupKeysym((XKeyEvent *)&event, 0);
+      /* Check for Escape key */
+      if (sym == XK_Escape) {
+	if (debug_esc == -1) {
+	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	}
+	dbglog("[chipmunk] ESC keysym detected (m_testkey fallback) -> ^C");
+	XPutBackEvent(m_display, &event);
+	return((uchar) '\003');
+      }
+      if (sym == XK_Up || sym == XK_KP_Up) {
+	XPutBackEvent(m_display, &event);
+	return((uchar) '\037');  /* Up arrow -> scroll up */
+      } else if (sym == XK_Down || sym == XK_KP_Down) {
+	XPutBackEvent(m_display, &event);
+	return((uchar) '\n');    /* Down arrow -> scroll down */
+      } else if (sym == XK_Left || sym == XK_KP_Left) {
+	XPutBackEvent(m_display, &event);
+	return((uchar) '\b');    /* Left arrow -> scroll left */
+      } else if (sym == XK_Right || sym == XK_KP_Right) {
+	XPutBackEvent(m_display, &event);
+	return((uchar) '\034');  /* Right arrow -> scroll right */
+      } else if ((event.xkey.state & ControlMask) &&
+                 (sym == XK_c || sym == XK_C)) {
+	XPutBackEvent(m_display, &event);
+	if (debug_esc == -1) {
+	  const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+	  debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+	}
+	dbglog("[chipmunk] Ctrl-C detected (m_testkey) -> ^C");
+	return((uchar) '\003');
       }
     } else if ((event.type == Expose) &&
 	       (event.xexpose.window == m_window) &&
@@ -5137,6 +5622,7 @@ uchar m_testkey()
 	       (event.xconfigure.window == m_window) &&
 	       ((event.xconfigure.width != m_across+1) ||
 		(event.xconfigure.height != m_down+1))) {
+      update_window_size(event.xconfigure.width, event.xconfigure.height);
 #ifdef SHOW_CONFIGURE_EVENTS
       fprintf(stderr, "m_testkey(): ConfigureNotify event detected\n");
 #endif/* SHOW_CONFIGURE_EVENTS*/
@@ -5385,3 +5871,5 @@ Anyptr *cp;
 {
 }
 
+
+/* Stub implementations removed - real implementations provided by logstuff.c */

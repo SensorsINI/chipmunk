@@ -24,7 +24,82 @@ You should have received a copy of the GNU General Public License
 along with this program; see the file COPYING.  If not, write to
 the Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 
-
+/*
+ * ============================================================================
+ * COORDINATE SYSTEM AND ZOOM DOCUMENTATION
+ * ============================================================================
+ *
+ * CIRCUIT COORDINATES:
+ * -------------------
+ * - Circuit elements (gates, wires) are positioned in "circuit coordinates"
+ * - Origin is at 16384 (defined as 'origin' constant in this file)
+ * - Circuit coordinates are integers, typically ranging from 0 to ~32768
+ * - All objects snap to a grid for precise alignment
+ *
+ * SCREEN COORDINATES:
+ * ------------------
+ * - Window size is defined by 'across' (width) and 'baseline' (height) in pixels
+ * - Default window size: 1280x960 (can be customized via ~/.chipmunk)
+ * - Screen coordinates start at (0,0) in top-left corner
+ *
+ * VIEWPORT TO CIRCUIT MAPPING:
+ * ---------------------------
+ * The viewport shows a window into the circuit coordinate space. The mapping is:
+ *
+ *   circuit_x = (screen_x + gg.xoff) / gg.scale * log_scale0 / gg.scale
+ *   
+ * Simplified (as used in refresh() at line ~4614):
+ *   circuit_x = gg.xoff / gg.scale
+ *   circuit_x_max = (gg.xoff + across) / gg.scale
+ *
+ * KEY VIEWPORT VARIABLES:
+ * ----------------------
+ * - gg.xoff, gg.yoff: Viewport offset in scaled units (NOT pixels, NOT circuit coords)
+ *                     These define what circuit coordinate appears at the left/top edge
+ * - gg.scale: Current zoom scale factor (from zoomscales array)
+ * - zoom: Current zoom level index (-3 to +3, maps to scale via zoomscales[zoom+3])
+ * - across, baseline: Window size in pixels
+ * - xoff0, yoff0: Scroll offsets for smooth panning
+ *
+ * ZOOM SYSTEM:
+ * -----------
+ * Available zoom levels (as of 2025):
+ *   zoom = -3 → scale = 1  (most zoomed out, see 5x more area)
+ *   zoom = -2 → scale = 2
+ *   zoom = -1 → scale = 3
+ *   zoom =  0 → scale = 5  (DEFAULT, log_scale0 = 5)
+ *   zoom = +1 → scale = 8
+ *   zoom = +2 → scale = 12
+ *   zoom = +3 → scale = 20 (most zoomed in, see finest details)
+ *
+ * Larger scale = more zoomed in (objects appear larger)
+ * Formula: object_screen_pixels = (object_circuit_units * scale) / log_scale0
+ *
+ * CENTERING FORMULA:
+ * -----------------
+ * To center viewport on circuit coordinate (center_x, center_y):
+ *   gg.xoff = center_x * gg.scale - across / 2
+ *   gg.yoff = center_y * gg.scale - baseline / 2
+ *
+ * This ensures center_x appears at the horizontal center of the window.
+ *
+ * ZOOM CONTROLS:
+ * -------------
+ * - '<' key: Zoom out (decrease zoom level, decrease scale)
+ * - '>' key: Zoom in (increase zoom level, increase scale)
+ * - 'F' key: Fit and zoom - automatically center and zoom all objects
+ * - 'h' key: Home - return to origin and reset zoom to default (zoom=0, scale=5)
+ *
+ * FUNCTIONS TO NOTE:
+ * -----------------
+ * - setscale(zoom_level): Sets zoom and gg.scale from zoom level index
+ * - zoomto(zoom_level): Changes zoom and adjusts offsets to maintain center
+ * - fitzoom(): Automatically fits all objects in window (bound to 'F' key)
+ * - refresh(): Redraws circuit, uses xoff/scale to determine visible area
+ * - pagembb(): Computes bounding box of all objects on current page
+ *
+ * ============================================================================
+ */
 
 /*
 
@@ -46,6 +121,12 @@ the Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
 #include <unistd.h>
 #endif
 #include <time.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#ifdef __linux__
+#include <execinfo.h>
+#endif
 
 #define LOAD_SEARCH    /* Use the search path in load command. */
 
@@ -151,8 +232,8 @@ char *str, **ptr;
 #endif
 
 
-extern char *GetChipmunkPath();
-char *my_strdup();
+extern char *GetChipmunkPath(char *ev, char *deft);
+char *my_strdup(char *s);
 #undef strdup
 #define strdup my_strdup
 #define newci_findprocedure2  findprocedure
@@ -336,7 +417,7 @@ typedef uchar igrouparray[log_million];
 typedef struct logmenurec {
   Char name[17];
   Char cmd[33];
-  boolean *bool;
+  boolean *bool_ptr;
 } logmenurec;   /* Pop-up menu options */
 
 typedef logmenurec logmenutype[8];
@@ -742,17 +823,126 @@ Static Void initcolormap()
   m_setcolor((long)log_dred, 8L, 0L, 0L);
   m_setcolor((long)log_lgray, 10L, 10L, 10L);
   m_setcolor((long)log_cred, 15L, 0L, 0L);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
   m_vseecolors(0L, 16L, rcolormap, gcolormap, bcolormap);
+#pragma GCC diagnostic pop
 }
 
 
 Static Void fixcolormap()
 {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
   m_vsetcolors(0L, 16L, rcolormap, gcolormap, bcolormap);
+#pragma GCC diagnostic pop
   recolor_log_cursors(gg.color.cursor, true);
 }
 
 
+
+/* Update window title with filename (without .lgf extension) */
+Static Void update_window_title_with_file(filename)
+Char *filename;
+{
+  Char title[300];
+  Char basename[256];
+  Char *last_slash, *last_dot;
+  
+  if (filename == NULL || *filename == '\0') {
+    strcpy(title, "analog");
+  } else {
+    /* Extract basename from path */
+    last_slash = strrchr(filename, '/');
+    if (last_slash != NULL)
+      strcpy(basename, last_slash + 1);
+    else
+      strcpy(basename, filename);
+    
+    /* Remove .lgf extension if present */
+    last_dot = strrchr(basename, '.');
+    if (last_dot != NULL && strcmp(last_dot, ".lgf") == 0)
+      *last_dot = '\0';
+    
+    /* Format as "analog:filename" */
+    sprintf(title, "analog:%s", basename);
+  }
+  
+  m_set_window_title(title);
+}
+
+/* Save preferences to ~/.chipmunk */
+Static Void save_chipmunk_prefs()
+{
+  FILE *f;
+  Char prefs_path[512];
+  Char *home;
+  
+  home = getenv("HOME");
+  if (home == NULL)
+    return;
+  
+  sprintf(prefs_path, "%s/.chipmunk", home);
+  f = fopen(prefs_path, "w");
+  if (f == NULL)
+    return;
+  
+  fprintf(f, "# Chipmunk preferences file\n");
+  fprintf(f, "# Automatically generated - do not edit manually\n\n");
+  
+  /* Save last opened file for current page */
+  if (curfilename[gg.curpage - 1] != NULL) {
+    fprintf(f, "last_file=%s\n", curfilename[gg.curpage - 1]);
+  }
+  
+  /* Save window geometry */
+  fprintf(f, "window_width=%d\n", across);
+  fprintf(f, "window_height=%d\n", baseline);
+  
+  fclose(f);
+}
+
+/* Load preferences from ~/.chipmunk */
+Static Void load_chipmunk_prefs(last_file)
+Char *last_file;
+{
+  FILE *f;
+  Char prefs_path[512];
+  Char line[512];
+  Char *home, *equals;
+  
+  *last_file = '\0';
+  
+  home = getenv("HOME");
+  if (home == NULL)
+    return;
+  
+  sprintf(prefs_path, "%s/.chipmunk", home);
+  f = fopen(prefs_path, "r");
+  if (f == NULL)
+    return;
+  
+  while (fgets(line, sizeof(line), f) != NULL) {
+    /* Remove newline */
+    line[strcspn(line, "\n")] = '\0';
+    
+    /* Skip comments and empty lines */
+    if (line[0] == '#' || line[0] == '\0')
+      continue;
+    
+    /* Parse key=value pairs */
+    equals = strchr(line, '=');
+    if (equals != NULL) {
+      *equals = '\0';
+      if (strcmp(line, "last_file") == 0) {
+        strcpy(last_file, equals + 1);
+      }
+      /* Window geometry is handled by init code */
+    }
+  }
+  
+  fclose(f);
+}
 
 Static Void initscreen()
 {
@@ -914,6 +1104,7 @@ Static Void clearshowalpha PV();
 /*================================================*/
 
 Static Void message PP((Char *msg));
+Static Void definemenu PP((short, short, Char *, Char *, short));
 
 
 Static Void report(num, s)
@@ -3081,6 +3272,31 @@ Static Char testkey2()
 Static Char inkey2()
 {
   Char ch;
+  static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
+  static int use_file = -1;
+  static char dbgpath[256];
+  auto void dbglog(const char *msg, int raw, int mapped) {
+    if (debug_esc <= 0)
+      return;
+    if (use_file == -1) {
+      const char *p = getenv("CHIPMUNK_DEBUG_ESC_FILE");
+      if (p && *p) {
+        strncpy(dbgpath, p, sizeof(dbgpath) - 1);
+        dbgpath[sizeof(dbgpath) - 1] = '\0';
+        use_file = 1;
+      } else {
+        strcpy(dbgpath, "/tmp/chipmunk-esc.log");
+        use_file = 1;
+      }
+    }
+    FILE *f = fopen(dbgpath, "a");
+    if (f) {
+      fprintf(f, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
+      fclose(f);
+    } else {
+      fprintf(stderr, "%s (raw=%d mapped=%d)\n", msg, raw, mapped);
+    }
+  }
 
   do {
   } while (!pollkbd2());
@@ -3090,6 +3306,18 @@ Static Char inkey2()
   } else
     realkey = nk_getkey();
   ch = realkey;
+  /* Normalize Escape (ASCII 27) to EXEC (^C, ASCII 3) for mode cancel */
+  if ((unsigned char)ch == 27) {
+    ch = '\003';
+  }
+  /* Optional debug: print when ESC/^C is detected (controlled by env) */
+  if (debug_esc == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    debug_esc = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+  if (debug_esc && ((unsigned char)realkey == 27 || ch == '\003')) {
+    dbglog("[chipmunk] ESC/^C detected in inkey2", (int)(unsigned char)realkey, (int)(unsigned char)ch);
+  }
   if ((ch & 255) >= 168 && (ch & 255) <= 239 && nk_capslock) {
 /* p2c: log.text, line 2967: Note: Character >= 128 encountered [281] */
 /* p2c: log.text, line 2967: Note: Character >= 128 encountered [281] */
@@ -3103,6 +3331,19 @@ Static Char inkey2()
   }
   gg.fastspeed = gg.fastmin;
   return ch;
+}
+
+/* Lightweight ESC/^C debug toggle */
+static int log_debug_esc_enabled()
+{
+  static int inited = 0;
+  static int enabled = 0;
+  if (!inited) {
+    const char *env = getenv("CHIPMUNK_DEBUG_ESC");
+    enabled = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+    inited = 1;
+  }
+  return enabled;
 }
 
 
@@ -6824,7 +7065,7 @@ Static Void setscale(short s)
 
 {
   zoom = s;
-  gg.scale = zoomscales[s + 2];
+  gg.scale = zoomscales[s + 3];
   gg.hscale = gg.scale / 2;
 }
 
@@ -7122,7 +7363,12 @@ Char *s;
 {  
    Char cmdline[512];
    char *browser;
-  
+   char help_url[512];
+   char help_path[512];
+   FILE *test_file;
+   char *loglib_env;
+   int is_wsl = 0;
+   
 #ifdef OS2
    vmessage("Starting a help window");
 #else
@@ -7137,12 +7383,11 @@ Char *s;
    systems.                                          */
     sprintf(cmdline, "start EPM.EXE %s\n",loghelpname);
 #else
-   /* Detect WSL2 and use appropriate browser launcher */
+   /* Detect WSL2 first to determine how to handle local files */
    browser = getenv("BROWSER");
    if (!browser) {
      /* Check if we're running on WSL2 (Microsoft WSL) */
      FILE *proc_version = fopen("/proc/version", "r");
-     int is_wsl = 0;
      if (proc_version) {
        char line[256];
        if (fgets(line, sizeof(line), proc_version)) {
@@ -7152,19 +7397,67 @@ Char *s;
        }
        fclose(proc_version);
      }
-     
+   }
+   
+   /* Try to find local HELP.md first */
+   help_url[0] = '\0';
+   loglib_env = getenv("LOGLIB");
+   if (loglib_env != NULL && strlen(loglib_env) > 0) {
+     /* LOGLIB is typically set to <chipmunk_dir>/log/lib */
+     /* Go up two directories to find root, then check for HELP.md */
+     strncpy(help_path, loglib_env, sizeof(help_path) - 1);
+     help_path[sizeof(help_path) - 1] = '\0';
+     /* Remove trailing /log/lib if present */
+     {
+       int len = strlen(help_path);
+       if (len >= 8 && strcmp(help_path + len - 8, "/log/lib") == 0) {
+         help_path[len - 8] = '\0';
+       } else if (len >= 4 && strcmp(help_path + len - 4, "/lib") == 0) {
+         help_path[len - 4] = '\0';
+       }
+     }
+     /* Append /HELP.md */
+     if (strlen(help_path) + 9 < sizeof(help_path)) {
+       strcat(help_path, "/HELP.md");
+       /* Check if file exists */
+       test_file = fopen(help_path, "r");
+       if (test_file != NULL) {
+         fclose(test_file);
+         /* File exists */
+         if (is_wsl) {
+           /* In WSL2, file:// URLs with Linux paths don't work well with Windows browsers */
+           /* For simplicity and reliability, use GitHub URL in WSL2 even if local file exists */
+           /* This ensures the help always opens correctly */
+           /* (Local file access from WSL2 to Windows via file:// URLs is problematic) */
+           help_url[0] = '\0'; /* Will fall through to GitHub URL */
+         } else {
+           /* Native Linux: use file:// URL directly */
+           sprintf(help_url, "file://%s", help_path);
+         }
+       }
+     }
+   }
+   
+   /* If local file not found or conversion failed, use GitHub URL */
+   if (help_url[0] == '\0') {
+     strncpy(help_url, "https://github.com/sensorsINI/chipmunk/blob/main/HELP.md", sizeof(help_url) - 1);
+     help_url[sizeof(help_url) - 1] = '\0';
+   }
+   
+   /* Build command to launch browser */
+   if (!browser) {
      if (is_wsl) {
        /* Use Windows cmd.exe to open browser in WSL2 */
        /* Change to Windows drive to avoid UNC path issues */
-       sprintf(cmdline, "cd /mnt/c && cmd.exe /c start \"\" \"https://john-lazzaro.github.io/chipmunk/document/log/index.html\" >/dev/null 2>&1 &");
+       sprintf(cmdline, "cd /mnt/c && cmd.exe /c start \"\" \"%s\" >/dev/null 2>&1 &", help_url);
      } else {
        /* Use xdg-open for native Linux systems */
        browser = "xdg-open";
-       sprintf(cmdline, "%s 'https://john-lazzaro.github.io/chipmunk/document/log/index.html' >/dev/null 2>&1 &", browser);
+       sprintf(cmdline, "%s '%s' >/dev/null 2>&1 &", browser, help_url);
      }
    } else {
      /* User specified browser via BROWSER environment variable */
-     sprintf(cmdline, "%s 'https://john-lazzaro.github.io/chipmunk/document/log/index.html' >/dev/null 2>&1 &", browser);
+     sprintf(cmdline, "%s '%s' >/dev/null 2>&1 &", browser, help_url);
    }
 #endif /* OS2 */
 
@@ -7302,7 +7595,7 @@ short z;
 {
   short s0, i, FORLIM;
 
-  if (-2 > z || z > 2 || z == zoom) {
+  if (-3 > z || z > 3 || z == zoom) {
     clearfunc();
     return;
   }
@@ -7660,6 +7953,9 @@ Char *name_;
   strcpy(name, name_);
   remcursor();
   commandfound = true;
+  if (log_debug_esc_enabled() && strcmp(name_, "ABORT") == 0) {
+    fprintf(stderr, "[chipmunk] ^C handled via assertfunc(\"ABORT\")\n");
+  }
   while (*name == ':')
     strcpy_overlap(name, name + 1);
   getword(name, cmd);
@@ -7720,6 +8016,15 @@ Static Void trykbd()
   switch (ch) {
 
   case '\003':
+    if (log_debug_esc_enabled()) {
+      fprintf(stderr, "[chipmunk] ^C in trykbd()\n");
+    }
+    assertfunc("ABORT");
+    break;
+  case '\033':   /* ESC fallback if mapping missed */
+    if (log_debug_esc_enabled()) {
+      fprintf(stderr, "[chipmunk] ESC (raw) in trykbd() -> ABORT\n");
+    }
     assertfunc("ABORT");
     break;
 
@@ -11245,8 +11550,29 @@ Static Void moveobject()
       pass();
       trykbd();
       pen();
+      /* Check for ABORT to cancel wire drawing */
+      if (!strcmp(gg.func, "ABORT")) {
+	gg.startpoint = false;
+	gg.movinghw = NULL;
+	gg.movingvw = NULL;
+	clipon();
+	m_colormode((long)m_xor);
+	if (gg.nearhw != NULL) {
+	  m_color((long)gg.color.wire[gg.nearhw->wcolr - log_wcol_normal]);
+	  hline(hx1, hx2, hy);
+	}
+	if (gg.nearvw != NULL) {
+	  m_color((long)gg.color.wire[gg.nearvw->wcolr - log_wcol_normal]);
+	  vline(vx, vy1, vy2);
+	}
+	m_colormode((long)m_normal);
+	clipoff();
+	remcursor();
+	clearfunc();
+	return;
+      }
     } while (gg.gridx == gg.posx && gg.gridy == gg.posy && gg.t.depressed &&
-	     strcmp(gg.func, "REFR"));
+	     strcmp(gg.func, "REFR") && strcmp(gg.func, "ABORT"));
     clipon();
     m_colormode((long)m_xor);
     if (gg.nearhw != NULL) {
@@ -11260,7 +11586,18 @@ Static Void moveobject()
     m_colormode((long)m_normal);
     clipoff();
     scroll();
-  } while (gg.t.depressed);
+  } while (gg.t.depressed && strcmp(gg.func, "ABORT"));
+  
+  /* If aborted, clean up and return */
+  if (!strcmp(gg.func, "ABORT")) {
+    gg.startpoint = false;
+    gg.movinghw = NULL;
+    gg.movingvw = NULL;
+    remcursor();
+    clearfunc();
+    return;
+  }
+  
   working();
   gg.movinghw = NULL;
   gg.movingvw = NULL;
@@ -12030,6 +12367,126 @@ Static Void closevert()
   cursortype = normal;
 }
 
+
+
+
+
+/*==================  FITZOOM  ===================*/
+/*=                                              =*/
+/*=  Fit and zoom all objects to fill the        =*/
+/*=  window optimally.                           =*/
+/*=                                              =*/
+/*================================================*/
+
+Static Void fitzoom()
+{
+  short x1, y1, x2, y2;
+  short obj_width, obj_height;
+  short view_width, view_height;
+  short center_x, center_y;
+  short zoom_x, zoom_y, new_zoom;
+  short new_zoom_level;  /* Local variable for calculated zoom level */
+  short margin = 40;  /* pixels of margin around objects */
+  
+  /* Get bounding box of all objects on current page */
+  if (!pagembb((int)gg.curpage, &x1, &y1, &x2, &y2)) {
+    /* Empty page - center at origin with default zoom */
+    gg.xoff = origin - across / 2;
+    gg.yoff = origin - baseline / 2;
+    setscale(0);
+    refrscreen();
+    return;
+  }
+  
+  /* Calculate object dimensions in circuit coordinates */
+  obj_width = x2 - x1;
+  obj_height = y2 - y1;
+  
+  /* Ensure minimum dimensions to avoid division by zero */
+  if (obj_width < 1)
+    obj_width = 1;
+  if (obj_height < 1)
+    obj_height = 1;
+  
+  /* Calculate available view area */
+  view_width = across - 2 * margin;
+  view_height = baseline - 2 * margin;
+  
+  /* Ensure view area is reasonable */
+  if (view_width < 100)
+    view_width = 100;
+  if (view_height < 100)
+    view_height = 100;
+  
+  /* Calculate center of objects */
+  center_x = (x1 + x2) / 2;
+  center_y = (y1 + y2) / 2;
+  
+  /* Calculate zoom scale that would fit width and height */
+  /* In Chipmunk: larger scale = more zoomed in (objects larger) */
+  /* screen_coord = circuit_coord * scale / log_scale0 */
+  /* So: scale = (screen_pixels * log_scale0) / circuit_units */
+  /* Using explicit checks to avoid any potential division issues */
+  if (obj_width > 0)
+    zoom_x = (view_width * log_scale0) / obj_width;
+  else
+    zoom_x = log_scale0;
+    
+  if (obj_height > 0)
+    zoom_y = (view_height * log_scale0) / obj_height;
+  else
+    zoom_y = log_scale0;
+  
+  /* Use the smaller zoom scale to ensure everything fits */
+  new_zoom = (zoom_x < zoom_y) ? zoom_x : zoom_y;
+  
+  /* Pick the closest available zoom level that will fit everything */
+  /* zoomscales array: {1, 2, 3, 5, 8, 12, 20} for zoom indices -3, -2, -1, 0, 1, 2, 3 */
+  /* new_zoom is the scale needed to perfectly fit with margin. */
+  /* Pick scale that's safely smaller to ensure good margins after discretization */
+  /* Use scale that's at most 80% of calculated to leave breathing room */
+  short safe_zoom = (new_zoom * 8) / 10;  /* 80% of calculated zoom */
+  
+  if (safe_zoom <= 1)
+    new_zoom_level = -3;  /* scale 1 (most zoomed out) */
+  else if (safe_zoom <= 2)
+    new_zoom_level = -2;  /* scale 2 */
+  else if (safe_zoom <= 3)
+    new_zoom_level = -1;  /* scale 3 */
+  else if (safe_zoom <= 5)
+    new_zoom_level = 0;   /* scale 5 (default) */
+  else if (safe_zoom <= 8)
+    new_zoom_level = 1;   /* scale 8 */
+  else if (safe_zoom <= 12)
+    new_zoom_level = 2;   /* scale 12 */
+  else if (safe_zoom <= 20)
+    new_zoom_level = 3;   /* scale 20 */
+  else
+    new_zoom_level = 1;   /* scale 8 - when very zoomed, stay conservative */
+  
+  /* Apply the zoom level */
+  setscale(new_zoom_level);
+  
+  /* Safety check: ensure gg.scale is valid */
+  if (gg.scale <= 0) {
+    /* Fallback to default zoom if something went wrong */
+    setscale(0);
+  }
+  
+  /* Center the view on the objects */
+  /* Viewport shows circuit coords: x1 = xoff/scale, x2 = (xoff+across)/scale */
+  /* To center on center_x: center_x = (xoff + across/2) / scale */
+  /* So: xoff = center_x * scale - across/2 */
+  gg.xoff = center_x * gg.scale - across / 2;
+  gg.yoff = center_y * gg.scale - baseline / 2;
+  
+  /* Reset scroll offsets */
+  xoff0 = 0;
+  yoff0 = 0;
+  
+  /* Refresh the display */
+  refrscreen();
+}
 
 
 
@@ -17731,6 +18188,11 @@ Char *filename_;
     if (curfilename[pgnum - 1] == NULL)
       curfilename[pgnum - 1] = (Char *)Malloc(256);
     strcpy(curfilename[pgnum - 1], filename);
+    /* Update window title when file is saved */
+    if (pgnum == gg.curpage) {
+      update_window_title_with_file(filename);
+      save_chipmunk_prefs();
+    }
   }
   if (f != NULL)
     fclose(f);
@@ -18716,6 +19178,9 @@ Char *reason_;
     if (curfilename[gg.curpage - 1] == NULL)
       curfilename[gg.curpage - 1] = (Char *)Malloc(256);
     strcpy(curfilename[gg.curpage - 1], filename);
+    /* Update window title when file is loaded */
+    update_window_title_with_file(filename);
+    save_chipmunk_prefs();
   }
 }
 
@@ -19172,6 +19637,9 @@ Char *reason_;
   if (curfilename[gg.curpage - 1] == NULL)
     curfilename[gg.curpage - 1] = (Char *)Malloc(256);
   strcpy(curfilename[gg.curpage - 1], filename);
+  /* Update window title when file is loaded */
+  update_window_title_with_file(filename);
+  save_chipmunk_prefs();
   if (f != NULL)
     fclose(f);
 }
@@ -19864,6 +20332,9 @@ Char *name_;
       case ' ':
       case '\003':
       case '\015':
+	if (log_debug_esc_enabled() && ch == '\003') {
+	  fprintf(stderr, "[chipmunk] ^C in status menu loop\n");
+	}
 	exitflag = true;
 	break;
       }
@@ -19928,7 +20399,7 @@ short num;
     y = line1 + 2;
     for (j = i * 2 - 2; j < i * 2; j++) {
       if (*menu[j].name != '\0') {
-	if (menu[j].bool != NULL && *menu[j].bool)
+	if (menu[j].bool_ptr != NULL && *menu[j].bool_ptr)
 	  m_color((long)gg.color.selword);
 	else if (menu[j].name[0] == '*')
 	  m_color((long)gg.color.redword);
@@ -20254,56 +20725,56 @@ Char *name;
 
 
 
-Static Void definemenu(num, part, name, cmd, bool)
+Static Void definemenu(num, part, name, cmd, bool_val)
 short num, part;
 Char *name, *cmd;
-short bool;
+short bool_val;
 {
   logmenurec *menu;
 
   menu = popupmenus[num - 1];
   strcpy(menu[part - 1].name, name);
   strcpy(menu[part - 1].cmd, cmd);
-  switch (bool) {
+  switch (bool_val) {
 
   case 1:
-    menu[part - 1].bool = &gg.invisible;
+    menu[part - 1].bool_ptr = &gg.invisible;
     break;
 
   case 2:
-    menu[part - 1].bool = &gg.textinvisible;
+    menu[part - 1].bool_ptr = &gg.textinvisible;
     break;
 
   case 3:
-    menu[part - 1].bool = &gg.markers;
+    menu[part - 1].bool_ptr = &gg.markers;
     break;
 
   case 4:
-    menu[part - 1].bool = &vlsi;
+    menu[part - 1].bool_ptr = &vlsi;
     break;
 
   case 5:
-    menu[part - 1].bool = &popup_grid;
+    menu[part - 1].bool_ptr = &popup_grid;
     break;
 
   case 6:
-    menu[part - 1].bool = &gg.probemode;
+    menu[part - 1].bool_ptr = &gg.probemode;
     break;
 
   case 7:
-    menu[part - 1].bool = &gg.glowmode;
+    menu[part - 1].bool_ptr = &gg.glowmode;
     break;
 
   case 8:
-    menu[part - 1].bool = &snapflag;
+    menu[part - 1].bool_ptr = &snapflag;
     break;
 
   case 9:
-    menu[part - 1].bool = &gg.pwrflag;
+    menu[part - 1].bool_ptr = &gg.pwrflag;
     break;
 
   default:
-    menu[part - 1].bool = NULL;
+    menu[part - 1].bool_ptr = NULL;
     break;
   }
 }
@@ -20544,7 +21015,10 @@ Static Void dofunction()
 	closevert();
       else if (!strcmp(gg.func, "CENTER"))
 	centercommand();
-      else if (!strcmp(gg.func, "YARDSTICK"))
+      else if (!strcmp(gg.func, "FIT")) {
+	fitzoom();
+	clearfunc();
+      } else if (!strcmp(gg.func, "YARDSTICK"))
 	yardstickcommand();
       else if (!strcmp(gg.func, "DEFINE"))
 	gatedefinitioncommand();
@@ -21813,6 +22287,8 @@ Static Void initialize()
   WITH->matrix[46 - nk_keylow][-nk_keymodlow].c = 7;
   WITH->matrix[46 - nk_keylow][-nk_keymodlow].k = nk_kknormal;
   XRebindKeysym(m_display, XStringToKeysym("BackSpace"), NULL, 0, (unsigned char * )"\007", 1);
+  /* Also treat Escape like EXEC (^C) so ESC exits modes just like Ctrl-C */
+  XRebindKeysym(m_display, XStringToKeysym("Escape"), NULL, 0, (unsigned char * )"\003", 1);
   gg.refrflag = true;
   gg.markers = false;
   gg.numpages = 1;
@@ -21957,6 +22433,312 @@ Static Void shownews()
 
 
 
+/*================  CRASH HANDLER  ================*/
+/*=                                              =*/
+/*=  Handle segmentation faults and other       =*/
+/*=     crashes with useful diagnostic info      =*/
+/*=                                              =*/
+/*================================================*/
+
+#ifndef OS2
+static void crash_handler(int sig, siginfo_t *info, void *context)
+{
+  FILE *crash_log;
+  char crash_log_path[1024];
+  char *loglib_env;
+  time_t now;
+  struct tm *tm_info;
+  char timestamp[64];
+  
+  /* Suppress further signals to avoid recursive crashes */
+  signal(SIGSEGV, SIG_DFL);
+  signal(SIGBUS, SIG_DFL);
+  signal(SIGABRT, SIG_DFL);
+  signal(SIGFPE, SIG_DFL);
+  
+  /* Get timestamp */
+  time(&now);
+  tm_info = localtime(&now);
+  strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+  
+  /* Try to write crash log to file */
+  crash_log = NULL;
+  loglib_env = getenv("LOGLIB");
+  if (loglib_env != NULL && strlen(loglib_env) > 0) {
+    /* Find repo root from LOGLIB */
+    char crash_path[512];
+    strncpy(crash_path, loglib_env, sizeof(crash_path) - 1);
+    crash_path[sizeof(crash_path) - 1] = '\0';
+    /* Remove trailing /log/lib if present */
+    {
+      int len = strlen(crash_path);
+      if (len >= 8 && strcmp(crash_path + len - 8, "/log/lib") == 0) {
+        crash_path[len - 8] = '\0';
+      } else if (len >= 4 && strcmp(crash_path + len - 4, "/lib") == 0) {
+        crash_path[len - 4] = '\0';
+      }
+    }
+    snprintf(crash_log_path, sizeof(crash_log_path), "%s/chipmunk-crash.log", crash_path);
+    crash_log = fopen(crash_log_path, "a");
+  } else {
+    /* Fallback to /tmp */
+    snprintf(crash_log_path, sizeof(crash_log_path), "/tmp/chipmunk-crash.log");
+    crash_log = fopen(crash_log_path, "a");
+  }
+  
+  /* Write crash information */
+  fprintf(stderr, "\n");
+  fprintf(stderr, "========================================\n");
+  fprintf(stderr, "CHIPMUNK CRASH DETECTED\n");
+  fprintf(stderr, "========================================\n");
+  fprintf(stderr, "Time: %s\n", timestamp);
+  
+  switch (sig) {
+    case SIGSEGV:
+      fprintf(stderr, "Signal: SIGSEGV (Segmentation Fault)\n");
+      fprintf(stderr, "Cause: Memory access violation (invalid pointer, buffer overflow, etc.)\n");
+      break;
+    case SIGBUS:
+      fprintf(stderr, "Signal: SIGBUS (Bus Error)\n");
+      fprintf(stderr, "Cause: Invalid memory alignment or access to non-existent memory\n");
+      break;
+    case SIGABRT:
+      fprintf(stderr, "Signal: SIGABRT (Abort)\n");
+      fprintf(stderr, "Cause: Program called abort() or assertion failed\n");
+      break;
+    case SIGFPE:
+      fprintf(stderr, "Signal: SIGFPE (Floating Point Exception)\n");
+      fprintf(stderr, "Cause: Division by zero or invalid floating point operation\n");
+      break;
+    default:
+      fprintf(stderr, "Signal: %d\n", sig);
+      fprintf(stderr, "Cause: Unknown crash\n");
+      break;
+  }
+  
+  if (info != NULL) {
+    fprintf(stderr, "Fault address: %p\n", info->si_addr);
+  }
+  
+#ifdef __linux__
+  {
+    void *array[50];
+    int size;
+    char **strings;
+    int i;
+    char addr2line_cmd[1024];
+    FILE *addr2line_pipe;
+    char line_buf[512];
+    char exe_path[512];
+    ssize_t exe_path_len;
+    
+    size = backtrace(array, 50);
+    strings = backtrace_symbols(array, size);
+    
+    /* Try to get executable path for addr2line */
+    exe_path[0] = '\0';
+    exe_path_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (exe_path_len > 0) {
+      exe_path[exe_path_len] = '\0';
+    } else {
+      /* Fallback: try to get from LOGLIB or use default */
+      char *loglib_env = getenv("LOGLIB");
+      if (loglib_env != NULL) {
+        snprintf(exe_path, sizeof(exe_path), "%s/../../bin/diglog", loglib_env);
+        /* Remove /log/lib and add /bin/diglog */
+        {
+          int len = strlen(exe_path);
+          if (len >= 8 && strcmp(exe_path + len - 8, "/log/lib") == 0) {
+            exe_path[len - 8] = '\0';
+            strcat(exe_path, "/bin/diglog");
+          }
+        }
+      } else {
+        strncpy(exe_path, "./bin/diglog", sizeof(exe_path) - 1);
+        exe_path[sizeof(exe_path) - 1] = '\0';
+      }
+    }
+    
+    if (strings != NULL) {
+      fprintf(stderr, "\nStack trace (%d frames):\n", size);
+      for (i = 0; i < size; i++) {
+        fprintf(stderr, "  [%2d] %s", i, strings[i]);
+        
+        /* Try to get source file and line number using addr2line */
+        /* Extract offset from strings[i] which looks like: "path(+0xOFFSET) [0xADDR]" */
+        if (exe_path[0] != '\0') {
+          char *offset_start = strstr(strings[i], "(+0x");
+          if (offset_start != NULL) {
+            offset_start += 1; /* skip the '(' */
+            char *offset_end = strchr(offset_start, ')');
+            if (offset_end != NULL) {
+              char offset_str[32];
+              int offset_len = offset_end - offset_start;
+              if (offset_len < sizeof(offset_str)) {
+                strncpy(offset_str, offset_start, offset_len);
+                offset_str[offset_len] = '\0';
+                
+                snprintf(addr2line_cmd, sizeof(addr2line_cmd), 
+                         "addr2line -e %s -f -C -p %s 2>/dev/null", 
+                         exe_path, offset_str);
+                addr2line_pipe = popen(addr2line_cmd, "r");
+                if (addr2line_pipe != NULL) {
+                  if (fgets(line_buf, sizeof(line_buf), addr2line_pipe) != NULL) {
+                    /* Remove trailing newline */
+                    {
+                      int len = strlen(line_buf);
+                      if (len > 0 && line_buf[len - 1] == '\n') {
+                        line_buf[len - 1] = '\0';
+                      }
+                    }
+                    /* Only show if addr2line found a valid location (not "??:0") */
+                    if (strstr(line_buf, "??:0") == NULL && strstr(line_buf, "?? ??:0") == NULL) {
+                      fprintf(stderr, "\n      -> %s", line_buf);
+                    }
+                  }
+                  pclose(addr2line_pipe);
+                }
+              }
+            }
+          }
+        }
+        fprintf(stderr, "\n");
+      }
+      free(strings);
+    }
+  }
+#endif
+  
+  fprintf(stderr, "\nTo help fix this issue, please:\n");
+  fprintf(stderr, "1. Note what you were doing when the crash occurred\n");
+  fprintf(stderr, "2. Check if you can reproduce the crash\n");
+  fprintf(stderr, "3. Report the issue at: https://github.com/sensorsINI/chipmunk/issues\n");
+  fprintf(stderr, "4. Include this crash information and the crash log file (if created)\n");
+  
+  if (crash_log != NULL) {
+    fprintf(crash_log, "\n========================================\n");
+    fprintf(crash_log, "CHIPMUNK CRASH LOG\n");
+    fprintf(crash_log, "========================================\n");
+    fprintf(crash_log, "Time: %s\n", timestamp);
+    fprintf(crash_log, "Signal: %d\n", sig);
+    if (info != NULL) {
+      fprintf(crash_log, "Fault address: %p\n", info->si_addr);
+    }
+#ifdef __linux__
+    {
+      void *array[50];
+      int size;
+      char **strings;
+      int i;
+      char addr2line_cmd[1024];
+      FILE *addr2line_pipe;
+      char line_buf[512];
+      char exe_path[512];
+      ssize_t exe_path_len;
+      
+      size = backtrace(array, 50);
+      strings = backtrace_symbols(array, size);
+      
+      /* Try to get executable path for addr2line */
+      exe_path[0] = '\0';
+      exe_path_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+      if (exe_path_len > 0) {
+        exe_path[exe_path_len] = '\0';
+      } else {
+        /* Fallback: try to get from LOGLIB or use default */
+        char *loglib_env = getenv("LOGLIB");
+        if (loglib_env != NULL) {
+          snprintf(exe_path, sizeof(exe_path), "%s/../../bin/diglog", loglib_env);
+          /* Remove /log/lib and add /bin/diglog */
+          {
+            int len = strlen(exe_path);
+            if (len >= 8 && strcmp(exe_path + len - 8, "/log/lib") == 0) {
+              exe_path[len - 8] = '\0';
+              strcat(exe_path, "/bin/diglog");
+            }
+          }
+        } else {
+          strncpy(exe_path, "./bin/diglog", sizeof(exe_path) - 1);
+          exe_path[sizeof(exe_path) - 1] = '\0';
+        }
+      }
+      
+      if (strings != NULL) {
+        fprintf(crash_log, "\nStack trace (%d frames):\n", size);
+        for (i = 0; i < size; i++) {
+          fprintf(crash_log, "  [%2d] %s", i, strings[i]);
+          
+          /* Try to get source file and line number using addr2line */
+          /* Extract offset from strings[i] which looks like: "path(+0xOFFSET) [0xADDR]" */
+          if (exe_path[0] != '\0') {
+            char *offset_start = strstr(strings[i], "(+0x");
+            if (offset_start != NULL) {
+              offset_start += 1; /* skip the '(' */
+              char *offset_end = strchr(offset_start, ')');
+              if (offset_end != NULL) {
+                char offset_str[32];
+                int offset_len = offset_end - offset_start;
+                if (offset_len < sizeof(offset_str)) {
+                  strncpy(offset_str, offset_start, offset_len);
+                  offset_str[offset_len] = '\0';
+                  
+                  snprintf(addr2line_cmd, sizeof(addr2line_cmd), 
+                           "addr2line -e %s -f -C -p %s 2>/dev/null", 
+                           exe_path, offset_str);
+                  addr2line_pipe = popen(addr2line_cmd, "r");
+                  if (addr2line_pipe != NULL) {
+                    if (fgets(line_buf, sizeof(line_buf), addr2line_pipe) != NULL) {
+                      /* Remove trailing newline */
+                      {
+                        int len = strlen(line_buf);
+                        if (len > 0 && line_buf[len - 1] == '\n') {
+                          line_buf[len - 1] = '\0';
+                        }
+                      }
+                      /* Only show if addr2line found a valid location (not "??:0") */
+                      if (strstr(line_buf, "??:0") == NULL && strstr(line_buf, "?? ??:0") == NULL) {
+                        fprintf(crash_log, "\n      -> %s", line_buf);
+                      }
+                    }
+                    pclose(addr2line_pipe);
+                  }
+                }
+              }
+            }
+          }
+          fprintf(crash_log, "\n");
+        }
+        free(strings);
+      }
+    }
+#endif
+    fprintf(crash_log, "========================================\n\n");
+    fclose(crash_log);
+    fprintf(stderr, "\nCrash log written to: %s\n", crash_log_path);
+  }
+  
+  fprintf(stderr, "========================================\n");
+  fprintf(stderr, "\n");
+  
+  /* Re-raise signal to get core dump if enabled */
+  raise(sig);
+}
+
+static void setup_crash_handlers(void)
+{
+  struct sigaction sa;
+  
+  sa.sa_sigaction = crash_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+  
+  sigaction(SIGSEGV, &sa, NULL);
+  sigaction(SIGBUS, &sa, NULL);
+  sigaction(SIGABRT, &sa, NULL);
+  sigaction(SIGFPE, &sa, NULL);
+}
+#endif /* OS2 */
+
 /*================  MAIN PROGRAM  ================*/
 /*=                                              =*/
 /*=  Initialize.                                 =*/
@@ -21971,6 +22753,11 @@ int main(int argc, Char * argv[])
 {
   long FORLIM;
   Char STR1[81];
+
+#ifndef OS2
+  /* Setup crash handlers for better error reporting */
+  setup_crash_handlers();
+#endif
 
   nc_text_in_window = 1;  
   PASCAL_MAIN(argc, argv);
@@ -21987,11 +22774,21 @@ int main(int argc, Char * argv[])
   for (temp1 = 1; temp1 <= maxgatesfiles; temp1++)
     libf1[temp1 - 1] = NULL;
   TRY(try40);
+    /* Print helpful welcome message to terminal BEFORE initializing graphics */
+    fprintf(stderr, "================================================================\n");
+    fprintf(stderr, "  Chipmunk Analog Circuit Simulator - Quick Start\n");
+    fprintf(stderr, "================================================================\n");
+    fprintf(stderr, "  Essential Keys:\n");
+    fprintf(stderr, "    ?  - Help    C - Catalog    c - Configure    d - Delete\n");
+    fprintf(stderr, "    F  - Fit all objects    < > - Zoom    Esc/^C - Exit mode\n");
+    fprintf(stderr, "    s  - Scope   0 - Reset      Space - Refresh\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "  Mouse: Tap to rotate/place, Drag to move, Right-click cancel\n");
+    fprintf(stderr, "  More help: Press ? key or see HELP.md in repo\n");
+    fprintf(stderr, "================================================================\n");
+    fflush(stderr);
+    
     initialize();
-#define HCL_KLUDGE
-#ifdef HCL_KLUDGE
-    printf("\210\f Starting\201\210 LOG\f\200");
-#endif  /* HCL_KLUDGE */
     do {
       gg.initdone = true;
       gg.fastspeed = gg.fastmin;
@@ -22029,6 +22826,14 @@ int main(int argc, Char * argv[])
 	  rabtime = timers_sysclock();
 	  if (displaynews)
 	    shownews();
+	  
+	  /* Auto-fit on first display after circuit is loaded */
+	  static boolean first_display = true;
+	  if (first_display && gg.incircuit) {
+	    first_display = false;
+	    fitzoom();
+	  }
+	  
 	  if (*gg.func == '\0') {
 	    do {
 	      if (refrtimer == 0 && !gg.startpoint) {
@@ -22129,6 +22934,21 @@ int main(int argc, Char * argv[])
 		  }
 		}
 	      } else {
+		/* Wire-drawing in progress (ospointflag true) */
+		/* Allow ESC/^C to cancel wire drawing immediately */
+		if (pollkbd2()) {
+		  Char ktest = testkey2();
+		  if (ktest == '\003' || (unsigned char)ktest == 27) {
+		    if (log_debug_esc_enabled()) {
+		      fprintf(stderr, "[chipmunk] ^C/ESC during wire-draw -> cancel\n");
+		    }
+		    gg.startpoint = false;
+		    /* consume key */
+		    (void)inkey2();
+		    pen();   /* restore cursor */
+		    goto _after_wire_draw;
+		  }
+		}
 		if (hvline(gg.oldx, gg.oldy, &gg.posx, &gg.posy)) {
 		  if (gg.posx != gg.oldx)
 		    addhwire(gg.posx, gg.oldx, gg.posy, curwcolor);
@@ -22136,6 +22956,7 @@ int main(int argc, Char * argv[])
 		    addvwire(gg.posx, gg.oldy, gg.posy, curwcolor);
 		}
 	      }
+_after_wire_draw:
 	      if (gg.invisible || gg.probemode || gg.showconflicts)
 		gg.startpoint = false;
 	    }
@@ -22314,6 +23135,7 @@ int main(int argc, Char * argv[])
     fclose(dumpfile);
   if (tracefile != NULL)
     fclose(tracefile);
+  m_save_window_geometry();  /* Save window size for next session */
   exit(0);
 }
 

@@ -73,7 +73,7 @@
 
 
 
-typedef short log_zoomtab[5];
+typedef short log_zoomtab[7];
 typedef short log_rottab[8];
 
 /* workaround for bug in OS2 icc compiler */

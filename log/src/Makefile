@@ -6,7 +6,7 @@
 
 #  "AnaLOG", the analog simulator for LOG, 5.66
 #  Copyright (C) 1985, 1990 John Lazzaro.
-#  Author's address: lazzaro@cs.berkeley.edu; 
+#  Author's address: lazzaro@cs.berkeley.edu;
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -74,21 +74,29 @@ LOCINC = ../../psys/include
 ## XINCLUDEDIR = /usr/X11/include
 ##
 ## For OS X, this usually works:
-## 
+##
 ## XINCLUDEDIR = /usr/X11R6/include
 ##
 ## For most versions of UNIX, one of the above directories
 ## will be the correct one to use on the line below:
 
-XINCLUDEDIR = .
+# Detect macOS and set X11 paths accordingly
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  # macOS: Use XQuartz paths
+  XINCLUDEDIR = /opt/X11/include
+else
+  # Linux/Other: Use default
+  XINCLUDEDIR = .
+endif
 
 BINDIR = ../../bin
 LIBP2C = ../../psys/src/libp2c.a
 
-## 
+##
 ## If X isn't in the library path, change LIBX11 to reflect this:
 ##
-## LIBX11 = -L/usr/X11R6/lib -lX11 
+## LIBX11 = -L/usr/X11R6/lib -lX11
 ##
 ## or maybe
 ##
@@ -96,7 +104,7 @@ LIBP2C = ../../psys/src/libp2c.a
 ##
 ## depending on your installation. Use the first one for OS X.
 ##
-## Modern Linux distributions may not include 32-bit libX11, 
+## Modern Linux distributions may not include 32-bit libX11,
 ## in which case a manual install will be required. It may
 ## also be necessary to force the linker to use the 32-bit
 ## version, by using:
@@ -112,7 +120,13 @@ LIBP2C = ../../psys/src/libp2c.a
 ## LIBX11= -lX11 -s
 ##
 
-LIBX11 = -lX11
+ifeq ($(UNAME_S),Darwin)
+  # macOS: Use XQuartz library paths
+  LIBX11 = -L/opt/X11/lib -lX11
+else
+  # Linux/Other: Use default
+  LIBX11 = -lX11
+endif
 
 ##
 ## (2) Library additions
@@ -122,7 +136,7 @@ LIBX11 = -lX11
 ##
 ## on Sun Solaris 2.X, -lsocket -lnsl must be added to OTHERLIBS
 
-OTHERLIBS= -lm 
+OTHERLIBS= -lm
 
 
 ##
@@ -138,10 +152,19 @@ OTHERLIBS= -lm
 ##
 ## For AmigaOS, ADE (Amiga Development Enviroment) with gcc is recommended.
 ##
-  
-CHIPMUNKCC = gcc -g
+## Note: -Wno-format-overflow and -Wno-stringop-overflow suppress warnings from
+## legacy 1980s code. These warnings are expected and would require extensive
+## code refactoring to fix, which is not practical for this historical codebase.
+## These flags are GCC-specific and not recognized by Apple Clang.
 
-CC = $(CHIPMUNKCC) 
+# Use GCC with warning suppression
+# Note: CC comes from environment (e.g. on macOS, CC=/opt/homebrew/bin/gcc-<version>)
+# Use := for immediate expansion to capture the environment CC before we override it
+BASE_CC := $(CC)
+CHIPMUNKCC = $(BASE_CC) -g -Wno-format-overflow -Wno-stringop-overflow
+
+# Use CHIPMUNKCC for compilation (inherits CC from environment)
+CC = $(CHIPMUNKCC)
 
 ##
 ## (4) Adding appropriate flags
@@ -149,24 +172,24 @@ CC = $(CHIPMUNKCC)
 ##
 ## Add these flags to the CHIPMUNKFLAGS below:
 ##
-## Linux/86                     -m32 -DBSD -Dlinux -DF_OK=0 
-## Apple OS X                   -m32 -DBSD -Dlinux -Dfreebsd 
-## FreeBSD                      -m32 -DBSD -Dfreebsd -Dlinux -DF_OK=0 
+## Linux/86                     -m32 -DBSD -Dlinux -DF_OK=0
+## Apple OS X                   -m32 -DBSD -Dlinux -Dfreebsd
+## FreeBSD                      -m32 -DBSD -Dfreebsd -Dlinux -DF_OK=0
 ##
 ## The platforms below are legacy, these flags may no longer be sufficient.
 ##
-## Solaris 2.X                      -Daux 
+## Solaris 2.X                      -Daux
 ## DEC Alpha (Linux or OSF)         -DBSD -Dlinux -DF_OK=0 -D__GCC__
 ## HP series 800 (gcc)
 ## HP series 800 (cc)               -w -Aa -D_HPUX_SOURCE -DF_OK=0
 ## FreeBSD                          -DBSD -Dfreebsd -Dlinux -DF_OK=0 -m486
-## SGI Irix 5.2/5,3                 -ansi -Wf -XNd10000 
+## SGI Irix 5.2/5,3                 -ansi -Wf -XNd10000
 ##                                   (if   -Wf -XNd10000 isn't supported by
 ##                                    your compiler, delete them)
-## Solaris 1.X (SunOS)              
-## IBM RS/6000 (xlc)                -DBSD=0 -Drs6000 
+## Solaris 1.X (SunOS)
+## IBM RS/6000 (xlc)                -DBSD=0 -Drs6000
 ## Apple AU/X                       -Daux
-## Apple MachTen                    -DBSD -DF_OK=0  
+## Apple MachTen                    -DBSD -DF_OK=0
 ## AmigaOS (gcc)                    -ansi -DBSD -DF_OK=0
 ##
 ##
@@ -179,9 +202,17 @@ CC = $(CHIPMUNKCC)
 ##   -m68030              : for 68030
 ##   -m68030 -m68881      : for 68030+6888x
 ##   -m68040              : for 68040 and 68060
-## 
+##
 
-CHIPMUNKFLAGS = -m64 -DBSD -Dlinux -DF_OK=0 -D__alpha__
+ifeq ($(UNAME_S),Darwin)
+  # macOS: Modern macOS only supports 64-bit, using freebsd compatibility flags
+  # Note: -D__alpha__ is REQUIRED to ensure filerec union uses int[64] (256 bytes)
+  # instead of long[64] (512 bytes), matching the binary .gate file format
+  CHIPMUNKFLAGS = -m64 -DBSD -Dlinux -Dfreebsd -D__alpha__
+else
+  # Linux: Default to 64-bit Linux/Alpha configuration
+  CHIPMUNKFLAGS = -m64 -DBSD -Dlinux -DF_OK=0 -D__alpha__
+endif
 
 CFLAGS =  $(CHIPMUNKFLAGS) -I$(LOCINC) -I$(XINCLUDEDIR) -DLOGLIB=\"$(LOGLIBDIR)\" -DF_OK=0
 
@@ -210,7 +241,7 @@ TOOLOBJ = $(SIMOBJ) lplot.o logspc.o logntk.o
 ##  -(cd $(BINDIR); ln -s diglog analog)
 ##
 ##  creates a symbolic link for analog. Symbolic links save lots
-##  of disk space, but may cause compatibility issues on some 
+##  of disk space, but may cause compatibility issues on some
 ##  older operating systems -- if problems arise, use a hard link.
 ##
 
@@ -238,12 +269,12 @@ makeana:
 LOGOBJ = log.o $(TOOLOBJ) logstuff.o logdef.o
 
 log: $(LOGOBJ) tooldir.o $(LIBP2C) makeana
-	$(CC) $(CFLAGS) tooldir.o $(LOGOBJ) $(LIBP2C) $(LIBX11)  \
+	$(CC) $(CFLAGS) -rdynamic tooldir.o $(LOGOBJ) $(LIBP2C) $(LIBX11)  \
 	$(OTHERLIBS) -o log
 
-## The following permits you to link properly with AmigaOS and 
+## The following permits you to link properly with AmigaOS and
 ## X shared libraries used in ADE
- 
+
 ##log: $(LOGOBJ) tooldir.o $(LIBP2C) makeana
 ##	prelink $(LIBX11)
 ##	$(CC) -Tshared.x -Wa,-s $(CFLAGS) tooldir.o $(LOGOBJ) $(LIBP2C) $(LIBX11)  \
@@ -251,7 +282,7 @@ log: $(LOGOBJ) tooldir.o $(LIBP2C) makeana
 ##	postlink log
 ##	rm shared.x xlibs.c xlibs.o
 
- 
+
 # The following, if it works on your system, will enable the "linklog"
 # script to work.
 
@@ -268,11 +299,11 @@ LOGEDOBJ = loged.o simdir.o $(SIMOBJ) logstuff.o
 loged: $(LOGEDOBJ) simdir.o $(LIBP2C)
 	$(CC) $(CFLAGS) $(LOGEDOBJ) $(LIBP2C) $(LIBX11) $(OTHERLIBS) -o loged
 
- 
- 
-# The following permits you to link properly with AmigaOS and 
+
+
+# The following permits you to link properly with AmigaOS and
 # X shared libraries used in ADE
- 
+
 ##loged: $(LOGEDOBJ) simdir.o $(LIBP2C)
 ##	prelink $(LIBX11)
 ##	$(CC) -Tshared.x -Wa,-s $(CFLAGS) $(LOGEDOBJ) $(LIBP2C) $(LIBX11) $(OTHERLIBS) -o loged
@@ -302,7 +333,7 @@ simdir.c: $(SIMOBJ)
 	chmod +x munch
 	./munch 'Log_[0-9]*_proc' $(SIMOBJ) > simdir.c
 
- 
+
 ## The following part of the Makefile is for making a tar file of the
 ## original parts of the log distribution. Most users have no need for it.
 
@@ -342,11 +373,4 @@ tardist:
 	-rm -f log.tar.gz
 	gzip log.tar
 
-create: dist tardist 
-
-
-
-
-
-
-
+create: dist tardist

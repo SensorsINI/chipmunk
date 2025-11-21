@@ -1,0 +1,139 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+  release:
+    types: [created, published]
+  workflow_dispatch:
+
+jobs:
+  build-macos-arm64:
+    name: Build macOS ARM64
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          # Install XQuartz for X11 (provides headers, libraries, and fonts)
+          brew install --cask xquartz
+
+          # Install GCC compiler
+          brew install gcc
+
+      - name: Build
+        run: |
+          make clean
+          make
+
+      - name: Create distribution package
+        run: |
+          mkdir -p dist
+          tar -czf dist/chipmunk-macos-arm64.tar.gz bin/ log/lib/ lib/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chipmunk-macos-arm64
+          path: dist/chipmunk-macos-arm64.tar.gz
+          retention-days: 30
+
+  build-macos-intel:
+    name: Build macOS Intel
+    runs-on: macos-15-intel
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          # Install XQuartz for X11 (provides headers, libraries, and fonts)
+          brew install --cask xquartz
+
+          # Install GCC compiler
+          brew install gcc
+
+      - name: Build
+        run: |
+          make clean
+          make
+
+      - name: Create distribution package
+        run: |
+          mkdir -p dist
+          tar -czf dist/chipmunk-macos-intel.tar.gz bin/ log/lib/ lib/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chipmunk-macos-intel
+          path: dist/chipmunk-macos-intel.tar.gz
+          retention-days: 30
+
+  build-ubuntu:
+    name: Build Ubuntu Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+
+          # Install X11 development libraries
+          sudo apt-get install -y libx11-dev
+
+          # Install required X11 fonts (6x10 and 8x13)
+          # Without these fonts, Chipmunk will fail with X_OpenFont errors
+          sudo apt-get install -y xfonts-base xfonts-75dpi xfonts-100dpi
+
+          # Install GCC compiler
+          sudo apt-get install -y gcc build-essential
+
+      - name: Build
+        run: |
+          make clean
+          make
+
+      - name: Create distribution package
+        run: |
+          mkdir -p dist
+          tar -czf dist/chipmunk-linux-x86_64.tar.gz bin/ log/lib/ lib/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chipmunk-linux-x86_64
+          path: dist/chipmunk-linux-x86_64.tar.gz
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: [build-macos-arm64, build-macos-intel, build-ubuntu]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./artifacts/**/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,10 +1,16 @@
 # Top-level Makefile for Chipmunk Tools
 # This Makefile orchestrates the build of psys libraries and log tools
 #
-# Version: 6.0.0
+# Version: 6.1.0
 # Base Chipmunk Version: 5.66
 
-.PHONY: all build clean install default help check
+# Use bash for targets that need bash features
+SHELL := /bin/bash
+
+.PHONY: all build clean install default help check setup install-deps uninstall uninstall-deps uninstall-bashrc bin/diglog
+
+# Sentinel file to track successful requirements check
+REQUIREMENTS_CHECKED := .requirements_checked
 
 # Default target
 default: all
@@ -12,19 +18,22 @@ default: all
 # Build everything (psys must be built before log)
 all: build
 
-build: psys/src/libp2c.a bin/diglog
+build: $(REQUIREMENTS_CHECKED) psys/src/libp2c.a bin/diglog
 	@echo ""
 	@echo "Build complete! You can now run: ./bin/analog"
+	@./scripts/path_setup.sh || true
 
 # Build psys libraries (required before building log)
 psys/src/libp2c.a:
 	@echo "Building psys libraries..."
-	$(MAKE) -C psys/src install
+	@echo "Note: Format-overflow warnings from legacy 1980s code are expected and suppressed."
+	@$(MAKE) -C psys/src install 2>&1 | grep -v "gets.*function is dangerous" || true
 
 # Build log tools (depends on psys)
 bin/diglog: psys/src/libp2c.a
 	@echo "Building log tools..."
-	$(MAKE) -C log/src install
+	@echo "Note: Format-overflow warnings from legacy 1980s code are expected and suppressed."
+	@$(MAKE) -C log/src install 2>&1 | grep -v "gets.*function is dangerous" || true
 
 # Clean all build artifacts
 clean:
@@ -32,10 +41,154 @@ clean:
 	$(MAKE) -C psys/src clean
 	@echo "Cleaning log..."
 	$(MAKE) -C log/src clean
+	@echo "Removing requirements check sentinel..."
+	@rm -f $(REQUIREMENTS_CHECKED)
 	@echo "Clean complete!"
 
 # Install everything (same as build)
 install: build
+
+# Setup: Automatically install missing dependencies and build
+setup: install-deps
+	@echo ""
+	@echo "Setup complete! Building Chipmunk tools..."
+	@$(MAKE) build
+
+# Install dependencies automatically (non-interactive)
+install-deps:
+	@echo "Installing dependencies automatically..."
+	@if ./check_requirements.sh -y; then \
+		touch $(REQUIREMENTS_CHECKED); \
+		echo ""; \
+		echo "Dependencies installed successfully."; \
+		echo ""; \
+	else \
+		echo ""; \
+		echo "Dependency installation failed. Please check the errors above."; \
+		exit 1; \
+	fi
+
+# Uninstall dependencies (remove packages installed by install-deps)
+uninstall-deps:
+	@echo "Uninstalling Chipmunk dependencies..."
+	@echo ""
+	@PACKAGES_TO_REMOVE=""; \
+	if dpkg -l | grep -q "^ii.*x11-utils"; then \
+		PACKAGES_TO_REMOVE="$$PACKAGES_TO_REMOVE x11-utils"; \
+	fi; \
+	if dpkg -l | grep -q "^ii.*xfonts-base"; then \
+		PACKAGES_TO_REMOVE="$$PACKAGES_TO_REMOVE xfonts-base"; \
+	fi; \
+	if dpkg -l | grep -q "^ii.*xfonts-75dpi"; then \
+		PACKAGES_TO_REMOVE="$$PACKAGES_TO_REMOVE xfonts-75dpi"; \
+	fi; \
+	if dpkg -l | grep -q "^ii.*xfonts-100dpi"; then \
+		PACKAGES_TO_REMOVE="$$PACKAGES_TO_REMOVE xfonts-100dpi"; \
+	fi; \
+	if [ -n "$$PACKAGES_TO_REMOVE" ]; then \
+		echo "Packages to remove:$$PACKAGES_TO_REMOVE"; \
+		echo ""; \
+		sudo apt-get remove -y $$PACKAGES_TO_REMOVE; \
+		echo ""; \
+		echo "✓ Dependencies uninstalled successfully."; \
+	else \
+		echo "No Chipmunk dependencies found to uninstall."; \
+	fi; \
+	echo ""; \
+	if dpkg -l | grep -q "^ii.*analog[[:space:]]"; then \
+		echo "⚠ NOTE: System 'analog' package detected (web server log analyzer)"; \
+		echo "   This is NOT related to Chipmunk and will conflict if both are in PATH."; \
+		echo "   If you want to remove it: sudo apt-get remove analog"; \
+	fi
+
+# Uninstall: Remove .bashrc changes and optionally dependencies
+uninstall: uninstall-bashrc
+	@echo ""
+	@read -p "Also uninstall dependencies (x11-utils, xfonts packages)? [y/N] " -n 1 -r; \
+	echo ""; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		$(MAKE) uninstall-deps; \
+	fi
+
+# Remove DISPLAY export and PATH from .bashrc
+uninstall-bashrc:
+	@echo "Removing Chipmunk changes from ~/.bashrc..."
+	@if [ ! -f ~/.bashrc ]; then \
+		echo "~/.bashrc not found. Nothing to remove."; \
+		exit 0; \
+	fi; \
+	BACKUP_FILE=~/.bashrc.chipmunk-backup-$$(date +%Y%m%d-%H%M%S); \
+	cp ~/.bashrc $$BACKUP_FILE; \
+	echo "Created backup: $$BACKUP_FILE"; \
+	REMOVED=0; \
+	\
+	# Remove chipmunk PATH block (between markers) \
+	MARKER_BEGIN="# >>> chipmunk PATH (added by build) >>>"; \
+	MARKER_END="# <<< chipmunk PATH (added by build) <<<"; \
+	if grep -qF "$$MARKER_BEGIN" ~/.bashrc 2>/dev/null; then \
+		awk -v b="$$MARKER_BEGIN" -v e="$$MARKER_END" ' \
+			$$0==b{skip=1; next} $$0==e{skip=0; next} !skip{print} \
+		' ~/.bashrc > ~/.bashrc.chipmunk.tmp && mv ~/.bashrc.chipmunk.tmp ~/.bashrc; \
+		REMOVED=1; \
+		echo "✓ Removed Chipmunk PATH export from ~/.bashrc"; \
+	fi; \
+	\
+	# Remove lines matching DISPLAY export patterns \
+	# Pattern 1: export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0 \
+	if grep -q "export DISPLAY.*resolv.conf" ~/.bashrc 2>/dev/null; then \
+		sed -i '/export DISPLAY.*resolv\.conf/d' ~/.bashrc; \
+		REMOVED=1; \
+		echo "✓ Removed DISPLAY export (resolv.conf pattern) from ~/.bashrc"; \
+	fi; \
+	# Pattern 2: export DISPLAY=IP:0 or export DISPLAY=IP:0.0 \
+	if grep -qE "^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0" ~/.bashrc 2>/dev/null; then \
+		if sed --version >/dev/null 2>&1; then \
+			sed -i -E '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0/d' ~/.bashrc; \
+		else \
+			sed -iE '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0/d' ~/.bashrc; \
+		fi; \
+		REMOVED=1; \
+		echo "✓ Removed DISPLAY export (IP:0 pattern) from ~/.bashrc"; \
+	fi; \
+	# Pattern 3: export DISPLAY=IP:0.0 \
+	if grep -qE "^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0\.0" ~/.bashrc 2>/dev/null; then \
+		if sed --version >/dev/null 2>&1; then \
+			sed -i -E '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0\.0/d' ~/.bashrc; \
+		else \
+			sed -iE '/^[[:space:]]*export DISPLAY=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:0\.0/d' ~/.bashrc; \
+		fi; \
+		REMOVED=1; \
+		echo "✓ Removed DISPLAY export (IP:0.0 pattern) from ~/.bashrc"; \
+	fi; \
+	\
+	if [ $$REMOVED -eq 1 ]; then \
+		echo ""; \
+		echo "✓ Chipmunk changes removed from ~/.bashrc"; \
+		echo "  Backup saved to: $$BACKUP_FILE"; \
+		echo "  Note: Open a new terminal or run 'source ~/.bashrc' to apply changes."; \
+	else \
+		echo "No Chipmunk changes found in ~/.bashrc"; \
+		rm -f $$BACKUP_FILE; \
+	fi
+
+# Run check_requirements.sh and create sentinel file on success
+$(REQUIREMENTS_CHECKED):
+	@echo "Checking requirements..."
+	@CHECK_FLAGS=""; \
+	if [ -n "$$CI" ] || [ -n "$$GITHUB_ACTIONS" ]; then \
+		CHECK_FLAGS="--build-only"; \
+	fi; \
+	if ./check_requirements.sh $$CHECK_FLAGS; then \
+		touch $(REQUIREMENTS_CHECKED); \
+		echo ""; \
+		echo "Requirements check passed. Proceeding with build..."; \
+		echo ""; \
+	else \
+		echo ""; \
+		echo "Requirements check failed. Please fix the issues above and try again."; \
+		echo "  Or run 'make setup' to automatically install missing dependencies."; \
+		exit 1; \
+	fi
 
 # Check system requirements (compiler, X11, fonts, etc.)
 check:
@@ -134,12 +287,15 @@ help:
 	@echo "Chipmunk Tools Makefile"
 	@echo ""
 	@echo "Targets:"
-	@echo "  make          - Build everything (default)"
-	@echo "  make build    - Build everything"
-	@echo "  make clean    - Remove all build artifacts"
-	@echo "  make install  - Build and install everything"
-	@echo "  make check    - Check system requirements (compiler, X11, fonts, etc.)"
-	@echo "  make help     - Show this help message"
+	@echo "  make              - Build everything (default)"
+	@echo "  make build        - Build everything"
+	@echo "  make setup        - Automatically install dependencies and build"
+	@echo "  make install-deps - Automatically install missing dependencies (non-interactive)"
+	@echo "  make uninstall    - Remove .bashrc changes and optionally uninstall dependencies"
+	@echo "  make uninstall-deps - Uninstall dependencies (x11-utils, xfonts packages)"
+	@echo "  make clean        - Remove all build artifacts"
+	@echo "  make install      - Build and install everything"
+	@echo "  make check        - Check system requirements (compiler, X11, fonts, etc.)"
+	@echo "  make help         - Show this help message"
 	@echo ""
 	@echo "After building, run: ./bin/analog"
-

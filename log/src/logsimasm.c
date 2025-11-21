@@ -99,7 +99,7 @@ boolean *stable;
       nip = (nodeinfo *)n->info;
       if ((nip->truev = newv = nip->v0) == log_none)
 	newv = nip->defv;
-      if (TRACE_COPY) printf("Setting node %x to %d\n", (unsigned int)nip, newv);
+      if (TRACE_COPY) printf("Setting node %p to %d\n", (void *)nip, newv);
       if (newv != (nip->v00 = nip->v)) {
 	nip->v = newv;
 	st = false;
@@ -349,7 +349,7 @@ static log_16_value g_expr()
     
   case 0xb0:  /* high pin */
     nip = g_pins[*g_proc++]->info;
-    if (TRACE_VAL) printf(" Value of %x is %d\n", (unsigned int)nip, (int)nip->v - 1);
+    if (TRACE_VAL) printf(" Value of %p is %d\n", (void *)nip, (int)nip->v - 1);
     return nip->v;
 
   case 0xb1:  /* STRONG */
@@ -359,7 +359,7 @@ static log_16_value g_expr()
   case16(0xc0):  /* pin */
   case16(0xd0):
     nip = g_pins[ch & 0x1f]->info;
-    if (TRACE_VAL) printf(" Value of %x is %d\n", (unsigned int)nip, (int)nip->v - 1);
+    if (TRACE_VAL) printf(" Value of %p is %d\n", (void *)nip, (int)nip->v - 1);
     return nip->v;
 
   case16(0xe0):  /* var */
@@ -555,7 +555,7 @@ Static Void g_stmts()
 
       case log_zero:
 	nip = np->info;
-	if (TRACE_VAL) printf(" Output 0 to %x (was %d)\n", (unsigned int)nip, nip->v0);
+	if (TRACE_VAL) printf(" Output 0 to %p (was %d)\n", (void *)nip, nip->v0);
 	if (nip->v0 == log_one)
 	  record_conflict(np);
 	else
@@ -564,7 +564,7 @@ Static Void g_stmts()
 
       case log_one:
 	nip = np->info;
-	if (TRACE_VAL) printf(" Output 1 to %x (was %d)\n", (unsigned int)nip, nip->v0);
+	if (TRACE_VAL) printf(" Output 1 to %p (was %d)\n", (void *)nip, nip->v0);
 	if (nip->v0 == log_zero)
 	  record_conflict(np);
 	else
@@ -583,7 +583,7 @@ Static Void g_stmts()
     oc_out_node:
       if (g_expr() == log_zero) {
 	nip = np->info;
-	if (TRACE_VAL) printf(" Output 0 to %x (was %d)\n", (unsigned int)nip, nip->v0);
+	if (TRACE_VAL) printf(" Output 0 to %p (was %d)\n", (void *)nip, nip->v0);
 	if (nip->v0 == log_one)
 	  record_conflict(np);
 	else

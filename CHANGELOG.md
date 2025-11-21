@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.1.0] - 2025-11-17
+
+### Added
+- **Startup Welcome Message**: Terminal displays essential keyboard shortcuts at launch for first-time users
+- **Fit-and-Zoom Feature**: Press 'F' key to automatically center and zoom all circuit objects to fit in window
+- **Extended Zoom Levels**: Expanded from 5 to 7 zoom levels (scales: 1, 2, 3, 5, 8, 12, 20)
+- **Auto-Fit on Startup**: Circuits automatically fit to window size when loaded
+- **ESC Key Support**: ESC key now exits modes (wire-drawing, delete, etc.) in addition to Ctrl-C
+- **Window Geometry Persistence**: Window size is saved to `~/.chipmunk_geometry` and restored on restart
+- **Focus-Aware Click Handling**: Prevents accidental wire-drawing when clicking to focus window
+- **Improved Crash Reporting**: Shows source file and line numbers in crash dumps for PIE binaries
+- **Comprehensive Code Documentation**: Added detailed headers to `log.c` and `mylib.c` explaining coordinate system, zoom logic, and X11 event handling
+- **HELP.md**: Complete user guide with keyboard shortcuts, navigation, and workflow tips
+- **Test Infrastructure**: Crash handler test utility with documentation
+
+### Fixed
+- **Build System**: Added `bin/diglog` to `.PHONY` targets so top-level `make` reliably detects source changes
+- **String Buffer Warnings**: Increased buffer sizes and added compiler pragmas to suppress false positives
+- **Gets Warning**: Filtered deprecated `gets()` warnings from build output
+- **PATH Setup**: Fixed WSL compatibility issues in PATH setup script
+- **Coordinate System**: Corrected fit-and-zoom centering formula for accurate view positioning
+- **Zoom Safety**: Added 80% safety factor to ensure objects fit with margin after discrete zoom level selection
+- **Division by Zero**: Added defensive checks in `fitzoom()` to prevent crashes on empty circuits
+- **Global Variable Corruption**: Fixed zoom calculation to use local variables before updating globals
+
+### Changed
+- **Default Window Size**: Increased from 512x390 to 1280x960 for modern displays
+- **Wire-Drawing Cancel**: Clarified that right-click is the intended way to cancel wire-drawing (ESC/Ctrl-C exit the mode after starting)
+- **Debug Support**: Added conditional debug logging via `CHIPMUNK_DEBUG_ESC` environment variable
+- **Keyboard Mapping**: Implemented ESC-to-Ctrl-C mapping at low level in `mylib.c` input functions
+
+### Developer Experience
+- **Improved Build Reliability**: `.PHONY` target ensures source changes are always detected
+- **Better Documentation**: Code headers explain complex coordinate transformations and event handling
+- **Debug Utilities**: Environment-variable-controlled debug logging for troubleshooting
+
 ## [6.0.0] - 2024-11-15
 
 ### Added

@@ -76,7 +76,7 @@ Const log_rottab log_irotyy = {
 };
 
 Const log_zoomtab zoomscales = {
-  2, 3, 5, 8, 12
+  1, 2, 3, 5, 8, 12, 20
 };
 
 

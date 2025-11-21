@@ -8,8 +8,8 @@
 #endif
 
 
-extern void P_random();
-extern long P_rand();
+extern void P_random(long *seed);
+extern long P_rand(long *seed, long limit);
 
 #undef vextern
 

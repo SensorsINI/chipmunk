@@ -14,6 +14,11 @@
 #  include <sys/types.h>    /* A/UX needs this. */
 #  include <sys/time.h>     /* A/UX needs this, too! */
 # endif
+# if defined(freebsd) || defined(linux)
+#  include <sys/types.h>
+#  include <sys/time.h>
+#  include <sys/select.h>
+# endif
 #endif
 
 #include <p2c/p2c.h>
@@ -999,8 +1004,6 @@ char *ev, *deft;
             last edit:  29-Oct-1984     D A Gwyn
       */
  
-extern int select();
-
 int microsleep( usec )         /* returns 0 if ok, else -1 */
 long usec;                     /* delay in microseconds */
 {
