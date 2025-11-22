@@ -171,6 +171,14 @@ These are set by the `bin/analog` wrapper script. You typically don't need to se
 
 - **`CHIPMUNK_LAUNCH_DIR`**: Automatically set to your current working directory. Used to resolve relative file paths for `:load` and `:save` commands, ensuring files are loaded/saved relative to where you launched the program, not the internal working directory.
 
+### Display Options
+
+- **`CHIPMUNK_CURSOR_SCALE`**: Scale factor for mouse cursor size (1-4). Useful for high-DPI displays where the default 16x16 cursors are too small. Default is 2 (2x normal size).
+  ```bash
+  CHIPMUNK_CURSOR_SCALE=2 analog circuit.lgf  # 2x size (32x32 pixels)
+  CHIPMUNK_CURSOR_SCALE=3 analog circuit.lgf  # 3x size (48x48 pixels)
+  ```
+
 - **`CHIPMUNK_MODE`**: Automatically set to `analog` by the wrapper script. Affects window naming (main window shows "analog" instead of "log").
 
 ### Debug Options
@@ -190,6 +198,11 @@ Environment variables for enabling debug output. Set to `1`, `y`, or `Y` to enab
 - **`CHIPMUNK_DEBUG_ESC_FILE`**: Redirect debug output (from `CHIPMUNK_DEBUG_ESC`) to a file instead of stderr.
   ```bash
   CHIPMUNK_DEBUG_ESC=1 CHIPMUNK_DEBUG_ESC_FILE=debug.log analog circuit.lgf
+  ```
+
+- **`CHIPMUNK_DEBUG_CURSOR`**: Enable debug logging for cursor scaling. Shows bitmap scaling details when `CHIPMUNK_CURSOR_SCALE` is used.
+  ```bash
+  CHIPMUNK_DEBUG_CURSOR=1 CHIPMUNK_CURSOR_SCALE=2 analog circuit.lgf
   ```
 
 ### Compile-Time Debug Options
