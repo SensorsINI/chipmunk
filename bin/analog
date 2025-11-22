@@ -17,13 +17,21 @@ if [ "$1" = "--help" ] || ([ "$1" = "-h" ] && [ -z "$2" ]); then
     echo "  -h, --help    Show this help message"
     echo "  -c <file>     Specify configuration file (default: analog.cnf)"
     echo "  -v            Vanilla LOG mode (no CNF file)"
-    echo "  -x <display>  Specify X display name"
-    echo "  -h <dir>      Specify home directory (use --help for help)"
+    echo "  -x <display>  Specify X display name (e.g., :0.0 or hostname:0)"
+    echo "  -z [<file>]   Enable trace mode (debugging). If file specified, output goes there"
+    echo "  -d <file>     Specify dump file for debug output"
+    echo "  -t <file>     Specify trace file for trace output (alternative to -z)"
+    echo "  -r <tool>     Run a specific tool immediately on startup (non-interactive)"
+    echo ""
+    echo "Note: -h is used for help in this wrapper. For home directory, use the"
+    echo "      underlying diglog command directly or set LOGLIB environment variable."
     echo ""
     echo "Examples:"
     echo "  ./bin/analog                           # Start with lesson1.lgf (for beginners)"
     echo "  ./bin/analog lessons/lesson1.lgf       # Open a specific circuit file"
     echo "  ./bin/analog -c log/lib/mos_example.cnf # Use custom configuration"
+    echo "  ./bin/analog -v                        # Start without configuration file"
+    echo "  ./bin/analog -z trace.txt circuit.lgf  # Enable trace mode with output file"
     echo ""
     echo "For more information, see: https://john-lazzaro.github.io/chipmunk/document/log/index.html"
     exit 0
@@ -32,6 +40,19 @@ fi
 # Save the launch directory for relative path resolution in :load commands
 # This allows users to load files relative to where they launched analog
 export CHIPMUNK_LAUNCH_DIR="$(pwd)"
+
+# Check if user specified a -c option or -v (vanilla mode) before processing
+HAS_CONFIG=false
+HAS_VANILLA=false
+for arg in "$@"; do
+    if [ "$arg" = "-c" ] || [ "$arg" = "-C" ]; then
+        HAS_CONFIG=true
+        break
+    elif [ "$arg" = "-v" ] || [ "$arg" = "-V" ]; then
+        HAS_VANILLA=true
+        break
+    fi
+done
 
 # Process arguments to handle paths correctly
 declare -a ARGS=()
@@ -52,7 +73,13 @@ cd "${CHIPMUNK_DIR}/log/lib"
 # If no arguments provided, open lesson1.lgf for first-time users
 if [ $# -eq 0 ]; then
     exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf "${CHIPMUNK_DIR}/lessons/lesson1.lgf"
+elif [ "$HAS_VANILLA" = "true" ]; then
+    # User specified -v (vanilla mode), pass arguments as-is without adding -c
+    exec "${CHIPMUNK_DIR}/bin/diglog" "${ARGS[@]}"
+elif [ "$HAS_CONFIG" = "true" ]; then
+    # User specified -c, pass arguments as-is (their -c will be used)
+    exec "${CHIPMUNK_DIR}/bin/diglog" "${ARGS[@]}"
 else
-    # Use -c option to explicitly load analog.cnf configuration
+    # No -c or -v specified, add default -c analog.cnf
     exec "${CHIPMUNK_DIR}/bin/diglog" -c analog.cnf "${ARGS[@]}"
 fi

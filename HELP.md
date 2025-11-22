@@ -103,6 +103,64 @@ Default configuration files are in `log/lib/`:
 
 Use custom config: `./bin/analog -c log/lib/custom.cnf`
 
+## Command-Line Options
+
+The `analog` command supports the following options:
+
+- **`-h, --help`**: Show help message and exit
+- **`-c <file>`**: Specify configuration file (default: `analog.cnf` if not specified)
+- **`-v`**: Vanilla LOG mode (no CNF file loaded)
+- **`-x <display>`**: Specify X display name (e.g., `:0.0` or `hostname:0`)
+- **`-z [<file>]`**: Enable trace mode (debugging). If file is specified, trace output goes to that file (default: `trace.text`)
+- **`-d <file>`**: Specify dump file for debug output
+- **`-t <file>`**: Specify trace file for trace output (alternative to `-z <file>`)
+- **`-r <tool>`**: Run a specific tool immediately on startup (non-interactive mode)
+- **`-h <dir>`**: Specify home directory for searching gate files, config files, etc. (Note: conflicts with `-h` for help; use `--help` for help)
+
+**Examples:**
+```bash
+./bin/analog                           # Start with lesson1.lgf (for beginners)
+./bin/analog lessons/lesson1.lgf       # Open a specific circuit file
+./bin/analog -c log/lib/custom.cnf     # Use custom configuration
+./bin/analog -v                        # Start without any configuration file
+./bin/analog -z trace.txt circuit.lgf  # Enable trace mode with output file
+./bin/analog -x :1.0                   # Use display :1.0
+```
+
+### How `-c` Option Works
+
+According to the [official documentation](https://john-lazzaro.github.io/chipmunk/document/log/ref/ref2.html):
+
+**When `-c` is specified:**
+- The specified configuration file **completely replaces** the default loading behavior
+- Default files like `log.cnf` or `analog.cnf` are **NOT** automatically loaded
+- Only the file specified with `-c` is read
+
+**When `-c` is NOT specified (default behavior):**
+- LOG looks for a configuration file in this order:
+  1. Program-specific name: `analog.cnf` (if running `analog`) or `diglog.cnf` (if running `diglog`)
+  2. Fallback: `log.cnf`
+  3. Search order: current directory → home directory (`~/log`) → `/lib/log` (or `$LOGLIB`)
+
+**Recommended approach for custom configurations:**
+To view a legacy design, it might be necessary to provide a custom .cnf file.
+
+Instead of copying system CNF files (which may change), create your own CNF file that uses `INCLUDE` to inherit from the base configuration, then adds your customizations:
+
+```cnf
+{ Custom configuration }
+include analog.cnf              { Inherit base configuration and gates, e.g. GND, TO, FROM, nfet4, and at least some of the original PCMP pads}
+gates + gates.gate              { Add your custom gates file }
+menu gate1 gate2 gate3          { Customize menu gates }
+```
+
+**Note on INCLUDE paths:**
+- **Relative paths** (e.g., `genlog.cnf`) are resolved relative to the current working directory, which is `log/lib` after the wrapper script runs. This is the recommended approach.
+- **Absolute paths** (starting with `/`) will work but are not portable across systems (e.g., `/home/user/chipmunk/log/lib/genlog.cnf`).
+- Paths are searched in this order: current directory → launch directory → home directory (`~/log`) → LOGLIB directory (`log/lib`).
+
+**Note**: The wrapper script (`bin/analog`) automatically loads `analog.cnf` by default. To use a completely different configuration, specify it with `-c` or use `-v` for vanilla mode (no config file).
+
 ## Environment Variables
 
 Chipmunk-specific environment variables that affect behavior:
