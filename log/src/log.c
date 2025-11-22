@@ -97,6 +97,7 @@ the Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
  * - fitzoom(): Automatically fits all objects in window (bound to 'F' key)
  * - refresh(): Redraws circuit, uses xoff/scale to determine visible area
  * - pagembb(): Computes bounding box of all objects on current page
+ *              (optional parameter to include/exclude labels)
  *
  * ============================================================================
  */
@@ -10277,8 +10278,30 @@ Static Void delcommand()
 
 
 
-Static boolean pagembb(pg, x1, y1, x2, y2)
+/*==================  PAGEMBB  ===================*/
+/*=                                              =*/
+/*=  Compute bounding box of all objects on      =*/
+/*=     specified page.                           =*/
+/*=                                              =*/
+/*=  Parameters:                                  =*/
+/*=    pg: Page number (1-based)                  =*/
+/*=    x1, y1: Output - minimum coordinates      =*/
+/*=    x2, y2: Output - maximum coordinates      =*/
+/*=    include_labels: If false, exclude labels  =*/
+/*=                    (labels cause history dep.)=*/
+/*=                                              =*/
+/*=  Returns: true if objects found, false if    =*/
+/*=           page is empty                       =*/
+/*=                                              =*/
+/*=  NOTE: Labels are excluded when include_labels=false*/
+/*=        because label width depends on gg.scale,     */
+/*=        causing history dependency in fitzoom()      */
+/*=                                              =*/
+/*================================================*/
+
+Static boolean pagembb(pg, x1, y1, x2, y2, include_labels)
 short pg, *x1, *y1, *x2, *y2;
+boolean include_labels;
 {
   short max;
   log_grec *g;
@@ -10328,20 +10351,27 @@ short pg, *x1, *y1, *x2, *y2;
       *y2 = vw->y2;
     vw = vw->next;
   }
-  l = gg.lbase[pg - 1];
-  while (l != NULL) {
-    if (l->x < *x1)
-      *x1 = l->x;
-    max = m_strwidth(logfont_lfont, l->name) / gg.scale;
+  /* Only include labels if requested. 
+   * Labels cause history dependency because their width depends on gg.scale
+   * (width = m_strwidth(...) / gg.scale). For fitzoom(), we exclude labels
+   * to get a stable bounding box that doesn't change with zoom level.
+   */
+  if (include_labels) {
+    l = gg.lbase[pg - 1];
+    while (l != NULL) {
+      if (l->x < *x1)
+	*x1 = l->x;
+      max = m_strwidth(logfont_lfont, l->name) / gg.scale;
 /* p2c: log.text, line 9437:
  * Warning: Symbol 'LOGFONT_LFONT' is not defined [221] */
-    if (l->x + max > *x2)
-      *x2 = l->x + max;
-    if (l->y < *y1)
-      *y1 = l->y;
-    if (l->y + 2 > *y2)
-      *y2 = l->y + 2;
-    l = l->next;
+      if (l->x + max > *x2)
+	*x2 = l->x + max;
+      if (l->y < *y1)
+	*y1 = l->y;
+      if (l->y + 2 > *y2)
+	*y2 = l->y + 2;
+      l = l->next;
+    }
   }
   b = gg.bbase[pg - 1];
   while (b != NULL) {
@@ -10368,7 +10398,7 @@ Static Void deleverything()
 {
   short x1, y1, x2, y2;
 
-  if (pagembb((int)gg.curpage, &x1, &y1, &x2, &y2))
+  if (pagembb((int)gg.curpage, &x1, &y1, &x2, &y2, true))
     cutcopy(&copybuf, x1, y1, x2, y2, true, false);
 }
 
@@ -11026,7 +11056,7 @@ Static Void extract()
   boolean okay;
   short x1, y1, x2, y2;
 
-  okay = pagembb((int)gg.curpage, &x1, &y1, &x2, &y2);
+  okay = pagembb((int)gg.curpage, &x1, &y1, &x2, &y2, true);
   if (okay)
     cutcopy(&copybuf, x1, y1, x2, y2, true, false);
   if (!strcmp(gg.funcarg, "*"))
@@ -12448,8 +12478,12 @@ Static Void fitzoom()
   fprintf(stderr, "[fitzoom] Margin: %d pixels\n", margin);
   fprintf(stderr, "[fitzoom] log_scale0=%d, origin=%d\n", log_scale0, origin);
   
-  /* Get bounding box of all objects on current page */
-  if (!pagembb((int)gg.curpage, &x1, &y1, &x2, &y2)) {
+  /* Get bounding box of all objects on current page, excluding labels
+   * Labels cause history dependency because their width depends on gg.scale.
+   * By excluding labels, we get a stable bounding box that doesn't change
+   * between successive F key presses.
+   */
+  if (!pagembb((int)gg.curpage, &x1, &y1, &x2, &y2, false)) {
     /* Empty page - center at origin with default zoom */
     fprintf(stderr, "[fitzoom] WARNING: Empty page, using default zoom\n");
     gg.xoff = origin - across / 2;
@@ -12461,9 +12495,8 @@ Static Void fitzoom()
   
   fprintf(stderr, "[fitzoom] Bounding box from pagembb(): x1=%d, y1=%d, x2=%d, y2=%d (circuit coords)\n", 
           x1, y1, x2, y2);
-  fprintf(stderr, "[fitzoom] NOTE: pagembb() includes labels with width calculated as m_strwidth(...) / gg.scale\n");
-  fprintf(stderr, "[fitzoom]       Current gg.scale=%d, so label widths depend on current zoom level.\n", gg.scale);
-  fprintf(stderr, "[fitzoom]       This causes history dependency - bounding box changes after scale changes.\n");
+  fprintf(stderr, "[fitzoom] NOTE: pagembb() called with include_labels=false to get stable bbox\n");
+  fprintf(stderr, "[fitzoom]       (labels excluded because their width depends on gg.scale, causing history dependency)\n");
   
   /* Calculate object dimensions in circuit coordinates */
   obj_width = x2 - x1;
@@ -12506,10 +12539,10 @@ Static Void fitzoom()
   /* We want the largest scale that fits, so: scale = view_width / obj_width */
   /* Note: This is the scale VALUE (1,2,3,5,8,12,20), not pixels divided by log_scale0 */
   /* 
-   * IMPORTANT: Cache bounding box BEFORE changing scale, because pagembb() includes
-   * labels whose width depends on gg.scale (line 10335: max = m_strwidth(...) / gg.scale)
-   * This causes history dependency - changing scale changes label widths, which changes
-   * bounding box on next call. We calculate using current scale's bounding box.
+   * IMPORTANT: We call pagembb() with include_labels=false to get a stable bounding box.
+   * Labels cause history dependency because their width depends on gg.scale
+   * (width = m_strwidth(...) / gg.scale). By excluding labels, the bounding box
+   * remains stable across successive F key presses, fitting only the geometry.
    */
   /* Using explicit checks to avoid any potential division issues */
   if (obj_width > 0) {
@@ -12528,19 +12561,6 @@ Static Void fitzoom()
   } else
     zoom_y = 1;
   
-  fprintf(stderr, "[fitzoom] Calculated zoom scales (before safety factor): zoom_x=%d, zoom_y=%d\n", 
-          zoom_x, zoom_y);
-  
-  /* Note about history dependency:
-   * pagembb() includes labels, and label width = m_strwidth(...) / gg.scale
-   * So when we change scale, next pagembb() call will include different label widths.
-   * This is why successive F key presses can produce different bounding boxes.
-   * The fix would be to either:
-   * 1. Exclude labels from fitzoom() bounding box calculation
-   * 2. Use a fixed scale for label width calculation in pagembb()
-   * 3. Cache bounding box at current scale and use that for zoom calculation
-   * For now, we accept this behavior - zoom is calculated based on current state.
-   */
   
   fprintf(stderr, "[fitzoom] Calculated zoom scales: zoom_x=%d, zoom_y=%d (ideal scale values)\n", 
           zoom_x, zoom_y);
@@ -12702,7 +12722,7 @@ Static Void centercommand()
   log_brec *b;
   short dx, dy, x1, y1, x2, y2;
 
-  if (pagembb((int)gg.curpage, &x1, &y1, &x2, &y2)) {
+  if (pagembb((int)gg.curpage, &x1, &y1, &x2, &y2, true)) {
     dx = (origin + across / 2) / log_scale0 - (x2 + x1) / 2;
     dy = (origin + baseline / 2) / log_scale0 - (y2 + y1) / 2;
     g = gg.gbase[gg.curpage - 1];
