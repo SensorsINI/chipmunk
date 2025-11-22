@@ -165,15 +165,41 @@ menu gate1 gate2 gate3          { Customize menu gates }
 
 Chipmunk-specific environment variables that affect behavior:
 
-- **`CHIPMUNK_LAUNCH_DIR`**: Automatically set by the `bin/analog` wrapper script to your current working directory. Used to resolve relative file paths for `:load` and `:save` commands, ensuring files are loaded/saved relative to where you launched the program, not the internal working directory.
+### Automatically Set by Wrapper Script
+
+These are set by the `bin/analog` wrapper script. You typically don't need to set these manually unless running `diglog` directly:
+
+- **`CHIPMUNK_LAUNCH_DIR`**: Automatically set to your current working directory. Used to resolve relative file paths for `:load` and `:save` commands, ensuring files are loaded/saved relative to where you launched the program, not the internal working directory.
 
 - **`CHIPMUNK_MODE`**: Automatically set to `analog` by the wrapper script. Affects window naming (main window shows "analog" instead of "log").
 
-- **`CHIPMUNK_DEBUG_ESC`**: Set to `1` to enable debug logging for Escape/Ctrl-C key detection. Useful for troubleshooting keyboard input issues.
+### Debug Options
 
-- **`CHIPMUNK_DEBUG_ESC_FILE`**: Set to a file path to redirect debug output (from `CHIPMUNK_DEBUG_ESC`) to a file instead of stderr. Example: `CHIPMUNK_DEBUG_ESC_FILE=debug.log`.
+Environment variables for enabling debug output. Set to `1`, `y`, or `Y` to enable:
 
-**Note**: The wrapper script (`bin/analog`) automatically sets `CHIPMUNK_LAUNCH_DIR` and `CHIPMUNK_MODE`. You typically don't need to set these manually unless running `diglog` directly.
+- **`CHIPMUNK_DEBUG_FITZOOM`**: Enable detailed fitzoom() debug output showing zoom calculations, bounding boxes, and coordinate transformations.
+  ```bash
+  CHIPMUNK_DEBUG_FITZOOM=1 analog circuit.lgf
+  ```
+
+- **`CHIPMUNK_DEBUG_ESC`**: Enable debug logging for Escape/Ctrl-C key detection. Useful for troubleshooting keyboard input issues.
+  ```bash
+  CHIPMUNK_DEBUG_ESC=1 analog circuit.lgf
+  ```
+
+- **`CHIPMUNK_DEBUG_ESC_FILE`**: Redirect debug output (from `CHIPMUNK_DEBUG_ESC`) to a file instead of stderr.
+  ```bash
+  CHIPMUNK_DEBUG_ESC=1 CHIPMUNK_DEBUG_ESC_FILE=debug.log analog circuit.lgf
+  ```
+
+### Compile-Time Debug Options
+
+For permanent debug builds, compile with debug macros (adjust based on your build system):
+
+- **`FITZOOM_DEBUG`**: Always enable fitzoom() debug output at compile time.
+  ```bash
+  make CFLAGS="-DFITZOOM_DEBUG"
+  ```
 
 ## Complete Documentation
 

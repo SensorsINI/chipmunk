@@ -12469,14 +12469,34 @@ Static Void fitzoom()
   short old_zoom_level, old_scale;
   short visible_x1, visible_y1, visible_x2, visible_y2;
   
+  /* Check if fitzoom debug logging is enabled */
+  /* Supports both compile-time macro and runtime environment variable */
+  static int debug_fitzoom = -1;  /* -1: uninit, 0: off, 1: on */
+  
+#ifdef FITZOOM_DEBUG
+  /* Compile-time debug enabled */
+  if (debug_fitzoom == -1) {
+    debug_fitzoom = 1;  /* Always on if compiled with -DFITZOOM_DEBUG */
+  }
+#else
+  /* Runtime check via environment variable */
+  if (debug_fitzoom == -1) {
+    const char *env = getenv("CHIPMUNK_DEBUG_FITZOOM");
+    debug_fitzoom = (env && *env && (*env == '1' || *env == 'y' || *env == 'Y')) ? 1 : 0;
+  }
+#endif
+  
+  /* Helper macro for conditional debug output */
+#define FITZOOM_DEBUG_PRINT(...) do { if (debug_fitzoom > 0) fprintf(stderr, __VA_ARGS__); } while(0)
+  
   /* Save current zoom state for comparison */
   old_zoom_level = zoom;
   old_scale = gg.scale;
   
-  fprintf(stderr, "\n[fitzoom] ========== FITZOOM DEBUG ==========\n");
-  fprintf(stderr, "[fitzoom] Window size: across=%d, baseline=%d pixels\n", across, baseline);
-  fprintf(stderr, "[fitzoom] Margin: %d pixels\n", margin);
-  fprintf(stderr, "[fitzoom] log_scale0=%d, origin=%d\n", log_scale0, origin);
+  FITZOOM_DEBUG_PRINT("\n[fitzoom] ========== FITZOOM DEBUG ==========\n");
+  FITZOOM_DEBUG_PRINT("[fitzoom] Window size: across=%d, baseline=%d pixels\n", across, baseline);
+  FITZOOM_DEBUG_PRINT("[fitzoom] Margin: %d pixels\n", margin);
+  FITZOOM_DEBUG_PRINT("[fitzoom] log_scale0=%d, origin=%d\n", log_scale0, origin);
   
   /* Get bounding box of all objects on current page, excluding labels
    * Labels cause history dependency because their width depends on gg.scale.
@@ -12485,7 +12505,7 @@ Static Void fitzoom()
    */
   if (!pagembb((int)gg.curpage, &x1, &y1, &x2, &y2, false)) {
     /* Empty page - center at origin with default zoom */
-    fprintf(stderr, "[fitzoom] WARNING: Empty page, using default zoom\n");
+    FITZOOM_DEBUG_PRINT("[fitzoom] WARNING: Empty page, using default zoom\n");
     gg.xoff = origin - across / 2;
     gg.yoff = origin - baseline / 2;
     setscale(0);
@@ -12493,16 +12513,16 @@ Static Void fitzoom()
     return;
   }
   
-  fprintf(stderr, "[fitzoom] Bounding box from pagembb(): x1=%d, y1=%d, x2=%d, y2=%d (circuit coords)\n", 
+  FITZOOM_DEBUG_PRINT("[fitzoom] Bounding box from pagembb(): x1=%d, y1=%d, x2=%d, y2=%d (circuit coords)\n", 
           x1, y1, x2, y2);
-  fprintf(stderr, "[fitzoom] NOTE: pagembb() called with include_labels=false to get stable bbox\n");
-  fprintf(stderr, "[fitzoom]       (labels excluded because their width depends on gg.scale, causing history dependency)\n");
+  FITZOOM_DEBUG_PRINT("[fitzoom] NOTE: pagembb() called with include_labels=false to get stable bbox\n");
+  FITZOOM_DEBUG_PRINT("[fitzoom]       (labels excluded because their width depends on gg.scale, causing history dependency)\n");
   
   /* Calculate object dimensions in circuit coordinates */
   obj_width = x2 - x1;
   obj_height = y2 - y1;
   
-  fprintf(stderr, "[fitzoom] Object dimensions: width=%d, height=%d (circuit coords)\n", 
+  FITZOOM_DEBUG_PRINT("[fitzoom] Object dimensions: width=%d, height=%d (circuit coords)\n", 
           obj_width, obj_height);
   
   /* Ensure minimum dimensions to avoid division by zero */
@@ -12515,7 +12535,7 @@ Static Void fitzoom()
   view_width = across - 2 * margin;
   view_height = baseline - 2 * margin;
   
-  fprintf(stderr, "[fitzoom] Available view area: width=%d, height=%d (pixels)\n", 
+  FITZOOM_DEBUG_PRINT("[fitzoom] Available view area: width=%d, height=%d (pixels)\n", 
           view_width, view_height);
   
   /* Ensure view area is reasonable */
@@ -12528,7 +12548,7 @@ Static Void fitzoom()
   center_x = (x1 + x2) / 2;
   center_y = (y1 + y2) / 2;
   
-  fprintf(stderr, "[fitzoom] Object center: center_x=%d, center_y=%d (circuit coords)\n", 
+  FITZOOM_DEBUG_PRINT("[fitzoom] Object center: center_x=%d, center_y=%d (circuit coords)\n", 
           center_x, center_y);
   
   /* Calculate zoom scale that would fit width and height */
@@ -12562,13 +12582,13 @@ Static Void fitzoom()
     zoom_y = 1;
   
   
-  fprintf(stderr, "[fitzoom] Calculated zoom scales: zoom_x=%d, zoom_y=%d (ideal scale values)\n", 
+  FITZOOM_DEBUG_PRINT("[fitzoom] Calculated zoom scales: zoom_x=%d, zoom_y=%d (ideal scale values)\n", 
           zoom_x, zoom_y);
   
   /* Use the smaller zoom scale to ensure everything fits */
   new_zoom = (zoom_x < zoom_y) ? zoom_x : zoom_y;
   
-  fprintf(stderr, "[fitzoom] Selected smaller zoom: new_zoom=%d\n", new_zoom);
+  FITZOOM_DEBUG_PRINT("[fitzoom] Selected smaller zoom: new_zoom=%d\n", new_zoom);
   
   /* Pick the closest available zoom level that will fit everything */
   /* zoomscales array: {1, 2, 3, 5, 8, 12, 20} for zoom indices -3, -2, -1, 0, 1, 2, 3 */
@@ -12577,8 +12597,8 @@ Static Void fitzoom()
   /* Use scale that's at most 80% of calculated to leave breathing room */
   short safe_zoom = (new_zoom * 8) / 10;  /* 80% of calculated zoom */
   
-  fprintf(stderr, "[fitzoom] Safe zoom (80%%): safe_zoom=%d\n", safe_zoom);
-  fprintf(stderr, "[fitzoom] Available zoom levels: -3(scale1), -2(scale2), -1(scale3), 0(scale5), 1(scale8), 2(scale12), 3(scale20)\n");
+  FITZOOM_DEBUG_PRINT("[fitzoom] Safe zoom (80%%): safe_zoom=%d\n", safe_zoom);
+  FITZOOM_DEBUG_PRINT("[fitzoom] Available zoom levels: -3(scale1), -2(scale2), -1(scale3), 0(scale5), 1(scale8), 2(scale12), 3(scale20)\n");
   
   if (safe_zoom <= 1)
     new_zoom_level = -3;  /* scale 1 (most zoomed out) */
@@ -12597,8 +12617,8 @@ Static Void fitzoom()
   else
     new_zoom_level = 1;   /* scale 8 - when very zoomed, stay conservative */
   
-  fprintf(stderr, "[fitzoom] Selected zoom level: %d (scale=%d)\n", new_zoom_level, zoomscales[new_zoom_level + 3]);
-  fprintf(stderr, "[fitzoom] Previous zoom: level=%d (scale=%d)\n", old_zoom_level, old_scale);
+  FITZOOM_DEBUG_PRINT("[fitzoom] Selected zoom level: %d (scale=%d)\n", new_zoom_level, zoomscales[new_zoom_level + 3]);
+  FITZOOM_DEBUG_PRINT("[fitzoom] Previous zoom: level=%d (scale=%d)\n", old_zoom_level, old_scale);
   
   /* Apply the zoom level */
   setscale(new_zoom_level);
@@ -12606,11 +12626,11 @@ Static Void fitzoom()
   /* Safety check: ensure gg.scale is valid */
   if (gg.scale <= 0) {
     /* Fallback to default zoom if something went wrong */
-    fprintf(stderr, "[fitzoom] WARNING: Invalid scale %d, resetting to default\n", gg.scale);
+    FITZOOM_DEBUG_PRINT("[fitzoom] WARNING: Invalid scale %d, resetting to default\n", gg.scale);
     setscale(0);
   }
   
-  fprintf(stderr, "[fitzoom] Applied scale: gg.scale=%d\n", gg.scale);
+  FITZOOM_DEBUG_PRINT("[fitzoom] Applied scale: gg.scale=%d\n", gg.scale);
   
   /* Center the view on the objects */
   /* Viewport shows circuit coords: x1 = xoff/scale, x2 = (xoff+across)/scale */
@@ -12619,7 +12639,7 @@ Static Void fitzoom()
   gg.xoff = center_x * gg.scale - across / 2;
   gg.yoff = center_y * gg.scale - baseline / 2;
   
-  fprintf(stderr, "[fitzoom] Calculated offsets: xoff=%d, yoff=%d (scaled units)\n", 
+  FITZOOM_DEBUG_PRINT("[fitzoom] Calculated offsets: xoff=%d, yoff=%d (scaled units)\n", 
           gg.xoff, gg.yoff);
   
   /* Calculate what circuit coordinate range will actually be visible */
@@ -12632,10 +12652,10 @@ Static Void fitzoom()
   visible_x2 = (gg.xoff + across) / gg.scale;
   visible_y2 = (gg.yoff + baseline) / gg.scale;
   
-  fprintf(stderr, "[fitzoom] Visible circuit coordinate range (calculated from xoff/scale):\n");
-  fprintf(stderr, "[fitzoom]   X: %d to %d (object bbox: %d to %d)\n", 
+  FITZOOM_DEBUG_PRINT("[fitzoom] Visible circuit coordinate range (calculated from xoff/scale):\n");
+  FITZOOM_DEBUG_PRINT("[fitzoom]   X: %d to %d (object bbox: %d to %d)\n", 
           visible_x1, visible_x2, x1, x2);
-  fprintf(stderr, "[fitzoom]   Y: %d to %d (object bbox: %d to %d)\n", 
+  FITZOOM_DEBUG_PRINT("[fitzoom]   Y: %d to %d (object bbox: %d to %d)\n", 
           visible_y1, visible_y2, y1, y2);
   
   /* Calculate what circuit coordinates would be at screen edges using drawing formula */
@@ -12645,33 +12665,33 @@ Static Void fitzoom()
   short bbox_screen_top = y1 * gg.scale - gg.yoff;
   short bbox_screen_bottom = y2 * gg.scale - gg.yoff;
   
-  fprintf(stderr, "[fitzoom] Bounding box screen positions (using drawing formula):\n");
-  fprintf(stderr, "[fitzoom]   X: left=%d, right=%d (window: 0 to %d)\n",
+  FITZOOM_DEBUG_PRINT("[fitzoom] Bounding box screen positions (using drawing formula):\n");
+  FITZOOM_DEBUG_PRINT("[fitzoom]   X: left=%d, right=%d (window: 0 to %d)\n",
           bbox_screen_left, bbox_screen_right, across);
-  fprintf(stderr, "[fitzoom]   Y: top=%d, bottom=%d (window: 0 to %d)\n",
+  FITZOOM_DEBUG_PRINT("[fitzoom]   Y: top=%d, bottom=%d (window: 0 to %d)\n",
           bbox_screen_top, bbox_screen_bottom, baseline);
   
   /* Check if bounding box fits */
   if (visible_x1 > x1 || visible_x2 < x2) {
-    fprintf(stderr, "[fitzoom] WARNING: X-axis does not fit! Visible range [%d,%d] vs bbox [%d,%d]\n",
+    FITZOOM_DEBUG_PRINT("[fitzoom] WARNING: X-axis does not fit! Visible range [%d,%d] vs bbox [%d,%d]\n",
             visible_x1, visible_x2, x1, x2);
   } else {
-    fprintf(stderr, "[fitzoom] X-axis: bbox fits within visible range\n");
+    FITZOOM_DEBUG_PRINT("[fitzoom] X-axis: bbox fits within visible range\n");
   }
   if (visible_y1 > y1 || visible_y2 < y2) {
-    fprintf(stderr, "[fitzoom] WARNING: Y-axis does not fit! Visible range [%d,%d] vs bbox [%d,%d]\n",
+    FITZOOM_DEBUG_PRINT("[fitzoom] WARNING: Y-axis does not fit! Visible range [%d,%d] vs bbox [%d,%d]\n",
             visible_y1, visible_y2, y1, y2);
   } else {
-    fprintf(stderr, "[fitzoom] Y-axis: bbox fits within visible range\n");
+    FITZOOM_DEBUG_PRINT("[fitzoom] Y-axis: bbox fits within visible range\n");
   }
   
   /* Check screen positions */
   if (bbox_screen_left < 0 || bbox_screen_right > across) {
-    fprintf(stderr, "[fitzoom] WARNING: X-axis screen position out of bounds! bbox [%d,%d] vs window [0,%d]\n",
+    FITZOOM_DEBUG_PRINT("[fitzoom] WARNING: X-axis screen position out of bounds! bbox [%d,%d] vs window [0,%d]\n",
             bbox_screen_left, bbox_screen_right, across);
   }
   if (bbox_screen_top < 0 || bbox_screen_bottom > baseline) {
-    fprintf(stderr, "[fitzoom] WARNING: Y-axis screen position out of bounds! bbox [%d,%d] vs window [0,%d]\n",
+    FITZOOM_DEBUG_PRINT("[fitzoom] WARNING: Y-axis screen position out of bounds! bbox [%d,%d] vs window [0,%d]\n",
             bbox_screen_top, bbox_screen_bottom, baseline);
   }
   
@@ -12681,21 +12701,21 @@ Static Void fitzoom()
   short obj_screen_width = obj_width * gg.scale;
   short obj_screen_height = obj_height * gg.scale;
   
-  fprintf(stderr, "[fitzoom] Object screen size (using drawing formula): width=%d, height=%d pixels\n",
+  FITZOOM_DEBUG_PRINT("[fitzoom] Object screen size (using drawing formula): width=%d, height=%d pixels\n",
           obj_screen_width, obj_screen_height);
-  fprintf(stderr, "[fitzoom] Available view area: width=%d, height=%d pixels\n",
+  FITZOOM_DEBUG_PRINT("[fitzoom] Available view area: width=%d, height=%d pixels\n",
           view_width, view_height);
   
   /* Calculate margins */
-  fprintf(stderr, "[fitzoom] Margins: X needs %d pixels (available: %d), Y needs %d pixels (available: %d)\n",
+  FITZOOM_DEBUG_PRINT("[fitzoom] Margins: X needs %d pixels (available: %d), Y needs %d pixels (available: %d)\n",
           obj_screen_width + 2 * margin, view_width + 2 * margin,
           obj_screen_height + 2 * margin, view_height + 2 * margin);
   
   /* Verify fit */
   if (obj_screen_width <= view_width && obj_screen_height <= view_height) {
-    fprintf(stderr, "[fitzoom] SUCCESS: Object fits within view area\n");
+    FITZOOM_DEBUG_PRINT("[fitzoom] SUCCESS: Object fits within view area\n");
   } else {
-    fprintf(stderr, "[fitzoom] WARNING: Object may not fit! (width: %d/%d, height: %d/%d)\n",
+    FITZOOM_DEBUG_PRINT("[fitzoom] WARNING: Object may not fit! (width: %d/%d, height: %d/%d)\n",
             obj_screen_width, view_width, obj_screen_height, view_height);
   }
   
@@ -12703,7 +12723,10 @@ Static Void fitzoom()
   xoff0 = 0;
   yoff0 = 0;
   
-  fprintf(stderr, "[fitzoom] ======================================\n\n");
+  FITZOOM_DEBUG_PRINT("[fitzoom] ======================================\n\n");
+  
+  /* Clean up macro */
+#undef FITZOOM_DEBUG_PRINT
   
   /* Refresh the display */
   refrscreen();
@@ -19479,6 +19502,8 @@ Char *reason_;
     /* Update window title when file is loaded */
     update_window_title_with_file(filename);
     save_chipmunk_prefs();
+    /* Auto-fit zoom after file is loaded */
+    fitzoom();
   }
 }
 
@@ -19948,6 +19973,8 @@ Char *reason_;
   /* Update window title when file is loaded */
   update_window_title_with_file(filename);
   save_chipmunk_prefs();
+  /* Auto-fit zoom after file is loaded */
+  fitzoom();
   if (f != NULL)
     fclose(f);
 }
@@ -23135,13 +23162,6 @@ int main(int argc, Char * argv[])
 	  rabtime = timers_sysclock();
 	  if (displaynews)
 	    shownews();
-	  
-	  /* Auto-fit on first display after circuit is loaded */
-	  static boolean first_display = true;
-	  if (first_display && gg.incircuit) {
-	    first_display = false;
-	    fitzoom();
-	  }
 	  
 	  if (*gg.func == '\0') {
 	    do {
