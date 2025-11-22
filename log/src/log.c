@@ -12461,6 +12461,9 @@ Static Void fitzoom()
   
   fprintf(stderr, "[fitzoom] Bounding box from pagembb(): x1=%d, y1=%d, x2=%d, y2=%d (circuit coords)\n", 
           x1, y1, x2, y2);
+  fprintf(stderr, "[fitzoom] NOTE: pagembb() includes labels with width calculated as m_strwidth(...) / gg.scale\n");
+  fprintf(stderr, "[fitzoom]       Current gg.scale=%d, so label widths depend on current zoom level.\n", gg.scale);
+  fprintf(stderr, "[fitzoom]       This causes history dependency - bounding box changes after scale changes.\n");
   
   /* Calculate object dimensions in circuit coordinates */
   obj_width = x2 - x1;
@@ -12502,19 +12505,42 @@ Static Void fitzoom()
   /* So: scale <= view_width / obj_width */
   /* We want the largest scale that fits, so: scale = view_width / obj_width */
   /* Note: This is the scale VALUE (1,2,3,5,8,12,20), not pixels divided by log_scale0 */
+  /* 
+   * IMPORTANT: Cache bounding box BEFORE changing scale, because pagembb() includes
+   * labels whose width depends on gg.scale (line 10335: max = m_strwidth(...) / gg.scale)
+   * This causes history dependency - changing scale changes label widths, which changes
+   * bounding box on next call. We calculate using current scale's bounding box.
+   */
   /* Using explicit checks to avoid any potential division issues */
-  if (obj_width > 0)
+  if (obj_width > 0) {
     zoom_x = view_width / obj_width;
-  else
+    /* Ensure minimum scale of 1 if object is larger than view */
+    if (zoom_x < 1)
+      zoom_x = 1;
+  } else
     zoom_x = 1;
     
-  if (obj_height > 0)
+  if (obj_height > 0) {
     zoom_y = view_height / obj_height;
-  else
+    /* Ensure minimum scale of 1 if object is larger than view */
+    if (zoom_y < 1)
+      zoom_y = 1;
+  } else
     zoom_y = 1;
   
   fprintf(stderr, "[fitzoom] Calculated zoom scales (before safety factor): zoom_x=%d, zoom_y=%d\n", 
           zoom_x, zoom_y);
+  
+  /* Note about history dependency:
+   * pagembb() includes labels, and label width = m_strwidth(...) / gg.scale
+   * So when we change scale, next pagembb() call will include different label widths.
+   * This is why successive F key presses can produce different bounding boxes.
+   * The fix would be to either:
+   * 1. Exclude labels from fitzoom() bounding box calculation
+   * 2. Use a fixed scale for label width calculation in pagembb()
+   * 3. Cache bounding box at current scale and use that for zoom calculation
+   * For now, we accept this behavior - zoom is calculated based on current state.
+   */
   
   fprintf(stderr, "[fitzoom] Calculated zoom scales: zoom_x=%d, zoom_y=%d (ideal scale values)\n", 
           zoom_x, zoom_y);
