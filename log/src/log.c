@@ -1623,6 +1623,21 @@ short x, y;
 /*=                                              =*/
 /*================================================*/
 
+/* Optional debug/override for XOR cursor rendering.
+ * If CHIPMUNK_DISABLE_XOR_CURSOR is set (non-zero), we skip all XOR drawing
+ * and rely solely on the X hardware cursor (set via choose_log_cursor()).
+ * This is useful to isolate cursor visibility problems on modern X/WSL. */
+static int xor_cursor_disabled = -1;
+
+static int xor_disabled(void)
+{
+  if (xor_cursor_disabled < 0) {
+    const char *env = getenv("CHIPMUNK_DISABLE_XOR_CURSOR");
+    xor_cursor_disabled = (env && *env && *env != '0') ? 1 : 0;
+  }
+  return xor_cursor_disabled;
+}
+
 Static Void xorcursor()
 {
   long curcm;
@@ -1632,6 +1647,59 @@ Static Void xorcursor()
   gg.cx_max = across;
   gg.cy_min = 0;
   gg.cy_max = baseline - 1;
+
+  /* Debug: optionally bypass XOR drawing entirely to see if cursor visibility
+   * issues are caused by the soft XOR cursor rather than the X hardware cursor.
+   */
+  if (xor_disabled()) {
+    if (getenv("CHIPMUNK_DEBUG_MOUSE"))
+      fprintf(stderr,
+	      "[MOUSE-XOR] xorcursor disabled, type=%d chair=%d rband=%d\n",
+	      (int)cursortype, (int)chairflag, (int)rbandflag);
+    /* Just ensure the hardware cursor shape matches the logical mode. */
+    if (!chairflag || cursortype == grid) {
+      if (cursortype != normal && cursy < baseline) {
+	switch (cursortype) {
+
+	case grid:
+	  choose_log_cursor(0);
+	  break;
+
+	case delete__:
+	  choose_log_cursor(2);
+	  break;
+
+	case copy_:
+	  choose_log_cursor(1);
+	  break;
+
+	case boxcursor:
+	  choose_log_cursor(4);
+	  break;
+
+	case paste:
+	  choose_log_cursor(0);
+	  break;
+
+	default:
+	  break;
+	}
+      } else {
+	if (rabbits && !avoidrabbits && cursy < baseline) {
+	  choose_log_cursor(0);
+	} else if (gg.probemode) {
+	  choose_log_cursor(3);
+	} else {
+	  choose_log_cursor(0);
+	}
+      }
+    } else {
+      choose_log_cursor(0);
+    }
+    oldcursortype = cursortype;
+    return;
+  }
+
   curcm = m_curcolormode();
   m_colormode((long)m_xor);
   m_color((long)gg.color.cursor);
@@ -1640,9 +1708,9 @@ Static Void xorcursor()
       switch (cursortype) {
 
       case grid:
+	/* Grid mode: hardware cursor is the normal arrow; overlay
+	 * a small XOR crosshair and full-screen grid lines. */
 	choose_log_cursor(0);
-/* p2c: log.text, line 1308:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
 	if (chairflag) {
 	  m_drawline(cursx1 - 3L, cursy1 - 5L, cursx1 + 3L, cursy1 + 5L);
 	  m_drawline(cursx1 - 3L, cursy1 + 5L, cursx1 + 3L, cursy1 - 5L);
@@ -1654,27 +1722,34 @@ Static Void xorcursor()
 	break;
 
       case delete__:
-	choose_log_cursor(2);
-/* p2c: log.text, line 1343:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
+	/* Delete mode: keep the standard hardware cursor; draw an XOR 'X'
+	 * around the pointer so it is clearly distinguishable. */
+	choose_log_cursor(0);
+	m_drawline((long)(cursx - 5), (long)(cursy - 5),
+		   (long)(cursx + 5), (long)(cursy + 5));
+	m_drawline((long)(cursx - 5), (long)(cursy + 5),
+		   (long)(cursx + 5), (long)(cursy - 5));
 	break;
 
       case copy_:
-	choose_log_cursor(1);
-/* p2c: log.text, line 1357:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
+	/* Copy mode: keep the standard hardware cursor; draw a long XOR
+	 * arrow tail to indicate copy direction. */
+	choose_log_cursor(0);
+	m_drawline((long)cursx, (long)cursy,
+		   (long)(cursx + 16), (long)(cursy - 4));
+	m_drawline((long)cursx, (long)cursy,
+		   (long)(cursx + 16), (long)(cursy + 4));
 	break;
 
       case boxcursor:
-	choose_log_cursor(4);
-/* p2c: log.text, line 1374:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
+	/* Box mode: hardware cursor is normal arrow; the selection
+	 * rectangle is drawn via chairflag/rbandflag handling below. */
+	choose_log_cursor(0);
 	break;
 
       case paste:
+	/* Paste mode: show a XOR rectangle preview as before. */
 	choose_log_cursor(0);
-/* p2c: log.text, line 1380:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
 	cx0 = (cursx + gg.xoff + 2) / gg.scale;
 	cy0 = (cursy + gg.yoff + 2) / gg.scale;
 	m_saveclip();
@@ -1693,28 +1768,23 @@ Static Void xorcursor()
     } else {
       if (rabbits && !avoidrabbits && cursy < baseline) {
 	choose_log_cursor(0);
-/* p2c: log.text, line 1402:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
 	if (cursx < 45)
 	  m_bunny(0L, cursy - 17L);
 	else
 	  m_bunny(cursx - 45L, cursy - 17L);
       } else if (gg.probemode) {
-	choose_log_cursor(3);
-/* p2c: log.text, line 1420:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
-      } else {
+	/* Probe mode: keep normal hardware cursor; highlight probed
+	 * node with other on-screen indicators. */
 	choose_log_cursor(0);
-/* p2c: log.text, line 1436:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
+      } else {
+	/* Normal mode: standard arrow only. */
+	choose_log_cursor(0);
       }
     }
   }
   if (chairflag) {
     if (rbandflag) {
       choose_log_cursor(0);
-/* p2c: log.text, line 1446:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
       if (vlsi)
 	m_color((long)gg.color.wire[curwcolor - log_wcol_normal]);
       else
@@ -1722,8 +1792,6 @@ Static Void xorcursor()
       m_drawline((long)cursx1, (long)cursy1, (long)cursx2, (long)cursy2);
     } else {
       choose_log_cursor(0);
-/* p2c: log.text, line 1460:
- * Warning: Symbol 'CHOOSE_LOG_CURSOR' is not defined [221] */
     }
   }
   oldcursortype = cursortype;
@@ -1743,8 +1811,12 @@ Static Void xorcursor()
 
 Static Void hidecursor()
 {
-  if (cursorflag)
+  if (cursorflag) {
+    if (getenv("CHIPMUNK_DEBUG_MOUSE"))
+      fprintf(stderr, "[MOUSE-XOR] hidecursor (cursorflag=1, hide=%d)\n",
+	      (int)cursorhide);
     xorcursor();
+  }
 }
 
 
@@ -1806,10 +1878,17 @@ short x, y;
       rbandflag = (abs(cursx1 - cursx2) + abs(cursy1 - cursy2) >= gg.scale &&
 		   hvline(cursx1, cursy1, &cursx2, &cursy2));
     }
+    if (getenv("CHIPMUNK_DEBUG_MOUSE"))
+      fprintf(stderr, "[MOUSE] drawcursor move/show to (%d,%d), type=%d\n",
+	      (int)x, (int)y, (int)cursortype);
     xorcursor();
   } else {
-    if (!cursorflag && !cursorhide)
+    if (!cursorflag && !cursorhide) {
+      if (getenv("CHIPMUNK_DEBUG_MOUSE"))
+	fprintf(stderr, "[MOUSE] drawcursor re-show at (%d,%d), type=%d\n",
+		(int)x, (int)y, (int)cursortype);
       xorcursor();
+    }
   }
   cursorflag = true;
   cursorhide = false;
@@ -1826,8 +1905,11 @@ short x, y;
 Static Void remcursor()
 {
   prevcursorflag = cursorflag;
-  if (cursorflag)
+  if (cursorflag) {
+    if (getenv("CHIPMUNK_DEBUG_MOUSE"))
+      fprintf(stderr, "[MOUSE-XOR] remcursor (cursorflag=1)\n");
     xorcursor();
+  }
   cursorflag = false;
   cursorhide = false;
 }
@@ -3002,6 +3084,16 @@ Static Void clearscreen()
   resetmessages();
   bottomcount = 0;
   gg.showpage = 0;
+
+  /* After a full clear, ensure the logical cursor is visible again at the
+   * current pen position if the pen is near the drawing area. Without this,
+   * the cursor can remain invisible until the next explicit mouse movement. */
+  if (gg.t.near_) {
+    if (getenv("CHIPMUNK_DEBUG_MOUSE"))
+      fprintf(stderr, "[MOUSE] drawcursor after clearscreen at (%ld,%ld)\n",
+	      (long)gg.t.x, (long)gg.t.y);
+    drawcursor((short)gg.t.x, (short)gg.t.y);
+  }
 }
 
 
@@ -3118,6 +3210,7 @@ Static Void pen()
     m_init_pen(tabletaddr);
     m_alpha_on();
   ENDTRY(try3);
+
   if (snapflag && gg.incircuit) {
     gg.t.x = (gg.t.x + gg.hscale + gg.xoff) / gg.scale * gg.scale - gg.xoff;
     gg.t.y = (gg.t.y + gg.hscale + gg.yoff) / gg.scale * gg.scale - gg.yoff;
@@ -5281,6 +5374,16 @@ Static Void refrscreen1()
   resetmessages();
   refresh();
   gg.refrflag = true;
+
+  /* Redraw the cursor after a full working-area refresh so it doesn't
+   * remain hidden until the user moves the mouse or leaves/re-enters
+   * the window. */
+  if (gg.t.near_) {
+    if (getenv("CHIPMUNK_DEBUG_MOUSE"))
+      fprintf(stderr, "[MOUSE] drawcursor after refrscreen1 at (%ld,%ld)\n",
+	      (long)gg.t.x, (long)gg.t.y);
+    drawcursor((short)gg.t.x, (short)gg.t.y);
+  }
 }
 
 
@@ -5300,6 +5403,9 @@ Static Void refrscreen()
   bottomcount = 0;
   m_colormode((long)m_normal);
   m_noclip();
+  if (getenv("CHIPMUNK_DEBUG_MOUSE"))
+    fprintf(stderr, "[MOUSE] refrscreen (full screen redraw) on page %d\n",
+	    (int)gg.showpage);
   fixcolormap();
   clearalpha();
   refrmenu();
@@ -5551,6 +5657,14 @@ Static Void pass()
   log_srec *WITH3;
 
   watchdog = timers_sysclock();
+
+  /* Ensure that the X11 hardware cursor for the main LOG window is always
+   * a visible shape (our arrow cursor), even if older soft-sprite code in
+   * the graphics library has tried to install a blank cursor. This is cheap
+   * and helps keep the mouse visible during heavy redraw/refresh operations,
+   * including scope/history updates. */
+  if (gg.showpage != 0)
+    choose_log_cursor(0);
   gg.busyflag = false;
   gg.oldsimstate = gg.simstate;
   gg.oldsimstatetool = gg.simstatetool;
@@ -16767,7 +16881,7 @@ Static Void haproc3()
 typedef short ararr[log_million];
 
 
-/* Local variables for historycommand: */
+/* Local variables for historycommand / scope view: */
 struct LOC_historycommand {
   boolean rflag, oldtrigger, oldreset, oldonoff, oldfast;
   short oldgridmode, oldgridwhich, gridx1, gridy1, gridx2, gridy2, valuey,

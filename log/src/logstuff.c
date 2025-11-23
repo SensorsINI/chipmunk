@@ -543,28 +543,60 @@ void recolor_log_cursors(int color, int force)
 
 static int cursor_shape = -1;
 
+/* Cursor backend selection:
+ *
+ * - By default we now use mylib's built-in X font cursor (left_ptr) for all
+ *   modes, and draw XOR overlays for copy/delete/grid/box. This keeps the
+ *   cursor visible and stable on modern X/WSL setups.
+ *
+ * - To restore the classic Chipmunk bitmap cursors (which support
+ *   CHIPMUNK_CURSOR_SCALE), set:
+ *
+ *       CHIPMUNK_USE_BITMAP_CURSOR=1
+ *
+ *   In bitmap mode, the scaling code in logstuff.c takes effect again.
+ */
+static int use_xfont_cursor_flag = -1;
+
+static int use_xfont_cursor(void)
+{
+  if (use_xfont_cursor_flag < 0) {
+    const char *env = getenv("CHIPMUNK_USE_BITMAP_CURSOR");
+    /* Default: X font cursor backend (no env or env==0) */
+    use_xfont_cursor_flag = (env && *env && *env != '0') ? 0 : 1;
+  }
+  return use_xfont_cursor_flag;
+}
+
 void choose_log_cursor(int curs)
 
 {
-  if (curs == cursor_shape)
-    return;
   cursor_shape = curs;
-  switch (curs) {
-  case 0:
-    XDefineCursor(m_display, m_window, arrow_cursor);
-    break;
-  case 1:
-    XDefineCursor(m_display, m_window, copy_cursor);
-    break;
-  case 2:
-    XDefineCursor(m_display, m_window, delete_cursor);
-    break;
-  case 3:
-    XDefineCursor(m_display, m_window, probe_cursor);
-    break;
-  case 4:
-    XDefineCursor(m_display, m_window, box_cursor);
-    break;
+
+  if (use_xfont_cursor()) {
+    /* Use a single standard X font cursor (left_ptr) for all logical modes.
+     * Visual differences between modes are provided by XOR overlays in
+     * xorcursor(), keeping the hardware cursor itself simple and stable. */
+    m_choosecursor(1);
+  } else {
+    /* Default: use Chipmunk's custom bitmap cursors. */
+    switch (curs) {
+    case 0:
+      XDefineCursor(m_display, m_window, arrow_cursor);
+      break;
+    case 1:
+      XDefineCursor(m_display, m_window, copy_cursor);
+      break;
+    case 2:
+      XDefineCursor(m_display, m_window, delete_cursor);
+      break;
+    case 3:
+      XDefineCursor(m_display, m_window, probe_cursor);
+      break;
+    case 4:
+      XDefineCursor(m_display, m_window, box_cursor);
+      break;
+    }
   }
 }
 

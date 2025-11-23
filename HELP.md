@@ -173,11 +173,24 @@ These are set by the `bin/analog` wrapper script. You typically don't need to se
 
 ### Display Options
 
-- **`CHIPMUNK_CURSOR_SCALE`**: Scale factor for mouse cursor size (1-4). Useful for high-DPI displays where the default 16x16 cursors are too small. Default is 2 (2x normal size).
+- **`CHIPMUNK_CURSOR_SCALE`**: Scale factor for Chipmunk's *bitmap* mouse cursors (1-4). Useful for high-DPI displays where the classic 16x16 cursors are too small. Default is 2 (2x normal size) when bitmap cursors are enabled.
+  - **Note**: As of 2025, the default cursor backend uses the X server’s native font cursor (for better visibility and compatibility on modern X/WSL), so `CHIPMUNK_CURSOR_SCALE` has no effect unless bitmap cursors are explicitly enabled with `CHIPMUNK_USE_BITMAP_CURSOR=1`.
   ```bash
-  CHIPMUNK_CURSOR_SCALE=2 analog circuit.lgf  # 2x size (32x32 pixels)
-  CHIPMUNK_CURSOR_SCALE=3 analog circuit.lgf  # 3x size (48x48 pixels)
+  # Enable classic bitmap cursors and scale them to 2x:
+  CHIPMUNK_USE_BITMAP_CURSOR=1 CHIPMUNK_CURSOR_SCALE=2 analog circuit.lgf
   ```
+
+- **`CHIPMUNK_USE_BITMAP_CURSOR`**: Force use of the classic Chipmunk bitmap cursors instead of the default X font cursor. When set to a non-zero value, enables `CHIPMUNK_CURSOR_SCALE` and restores the original arrow/copy/delete/probe cursor shapes.
+
+These cursors have the bug that any redraw (SPACE or scope trace reaching end) makes the cursors disappear until mouse-exit and mouse-enter event. It is a WIP to fix this bug.
+  ```bash
+  CHIPMUNK_USE_BITMAP_CURSOR=1 analog circuit.lgf
+  ```
+
+- **X11 cursor size (desktop-level)**: Because the default Chipmunk cursor is now the X server’s own pointer, its size is generally controlled by your X/desktop environment rather than by Chipmunk itself.
+  - On some Linux desktops that use **Xcursor**, you *may* be able to influence the global cursor size (for example via `XCURSOR_SIZE` or desktop-specific settings), but behavior varies widely by distro/compositor and is not guaranteed.
+  - On WSLg and many other modern X/Wayland stacks, there is currently no reliable, documented way for Chipmunk to change the size of the default X pointer from inside the container/VM; in those environments the effective cursor size is determined by the host’s graphics stack.
+  - If you need a larger pointer *inside* Chipmunk regardless of the host, use `CHIPMUNK_USE_BITMAP_CURSOR=1` together with `CHIPMUNK_CURSOR_SCALE` to control the size of Chipmunk’s own bitmap cursors (noting the redraw bug described above).
 
 - **`CHIPMUNK_MODE`**: Automatically set to `analog` by the wrapper script. Affects window naming (main window shows "analog" instead of "log").
 

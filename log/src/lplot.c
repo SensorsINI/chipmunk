@@ -2473,7 +2473,6 @@ struct LOC_doplotdata *LINK;
 Local Void refrscreen_(LINK)
 struct LOC_doplotdata *LINK;
 {
-  m_nocursor();
   (*lp_gg->hook.remcursor)();
   plotdata(lplot_screen, LINK);
   m_noclip();

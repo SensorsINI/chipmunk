@@ -2143,20 +2143,34 @@ static void turncursoron()
   }
 }
 
+static m_tablet_info mouse;
+
+/* Debug flag and helper for mouse/cursor behavior. Enable with
+ *   CHIPMUNK_DEBUG_MOUSE=1
+ * to log mouse-enter/leave events and cursor activity to stderr. */
+static int mouse_debug = -1;
+
+static int mouse_debug_enabled(void)
+{
+  if (mouse_debug < 0) {
+    const char *env = getenv("CHIPMUNK_DEBUG_MOUSE");
+    mouse_debug = (env && *env && *env != '0') ? 1 : 0;
+  }
+  return mouse_debug;
+}
+
 void m_nocursor()
 {
   Mfprintf(stderr, "m_nocursor()\n");
 
   if (cursor_is_on) {
+    if (mouse_debug_enabled())
+      fprintf(stderr, "[MOUSE-LL] m_nocursor: sprite_off at (%d,%d)\n",
+	      cursx, cursy);
     turncursoroff();
     cursor_is_on = 0;
-/*    fprintf(stderr, "XDefineCursor() (%d)\n", curcursor);  */
-    Xfprintf(stderr, "XDefineCursor()  (m_nocursor)\n");
-    XDefineCursor(m_display, m_window, cursors[curcursor].sub);
   }
 }
-
-static m_tablet_info mouse;
 
 void m_cursor(x, y)
 int x, y;
@@ -2167,6 +2181,9 @@ int x, y;
   TRNSFRM(x, y);
 
   if (x != cursx || y != cursy || !cursor_is_on) {
+    if (mouse_debug_enabled())
+      fprintf(stderr, "[MOUSE-LL] m_cursor move to (%d,%d), curcursor=%d sprite_on=%d\n",
+	      x, y, curcursor, cursor_is_on);
     turncursoroff();
     cursx = x;
     cursy = y;
@@ -2188,9 +2205,13 @@ int x, y;
     }
     if (! cursor_is_on) {
       cursor_is_on = 1;
-/*      fprintf(stderr, "XDefineCursor() (blankcursor)\n");  */
-      Xfprintf(stderr, "XDefineCursor()  (m_cursor)\n");
-      XDefineCursor(m_display, m_window, blankcursor);
+      if (mouse_debug_enabled())
+	fprintf(stderr, "[MOUSE-LL] m_cursor sprite_on at (%d,%d)\n",
+		cursx, cursy);
+      /* Do not change the X cursor here. Higher-level code (e.g. LOG)
+       * manages the window cursor via XDefineCursor / choose_log_cursor().
+       * Historically this switched to a blank X cursor and relied on a
+       * software-drawn sprite, which conflicts with modern hardware cursors. */
     }
   }
 }
@@ -4965,6 +4986,7 @@ m_tablet_info *pen;
   int newx, newy;
   int gotevent, found = 0, giveup = 0;
   static int ignore_next_left_click = 0;  /* Counter: ignore left-clicks until this reaches 0 */
+  static int in_main_window = 0;          /* Track when pointer is inside main graphics window */
 
   Pfprintf(stderr, "m_readpen(pen)\n");
 
@@ -5031,6 +5053,12 @@ m_tablet_info *pen;
     if (event.xany.window == m_window) {
       newx = (int) event.xbutton.x;
       newy = (int) event.xbutton.y;
+      if (!in_main_window) {
+	if (mouse_debug_enabled()) {
+	  fprintf(stderr, "[MOUSE] enter main window at (%d,%d)\n", newx, newy);
+	}
+	in_main_window = 1;
+      }
       pen->ax = mouse.ax;
       pen->ay = mouse.ay;
       UNTRNSFRM(newx, newy);
@@ -5041,11 +5069,24 @@ m_tablet_info *pen;
       pen->y = mouse.y;
       pen->ax = event.xbutton.x / nc_fontwidth;
       pen->ay = event.xbutton.y / nc_fontheight;
+      if (in_main_window) {
+	if (mouse_debug_enabled()) {
+	  fprintf(stderr, "[MOUSE] leave main window (into alpha) at (%ld,%ld)\n",
+		  pen->x, pen->y);
+	}
+	in_main_window = 0;
+      }
     } else {
       pen->x = mouse.x;
       pen->y = mouse.y;
       pen->ax = mouse.ax;
       pen->ay = mouse.ay;
+      if (in_main_window && event.type == LeaveNotify) {
+	if (mouse_debug_enabled()) {
+	  fprintf(stderr, "[MOUSE] leave main window (LeaveNotify)\n");
+	}
+	in_main_window = 0;
+      }
     }    
   } else {
     pen->dn = 0;
