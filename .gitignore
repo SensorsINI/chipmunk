@@ -52,4 +52,5 @@ test_crash_handler
 RELEASE_v*
 
 .github/drafts
-amon10/**
+amon10/** # test chip
+chip_collection/** # collection of pcmp chips

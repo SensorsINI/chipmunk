@@ -141,6 +141,26 @@ Debug logging is controlled via environment variables:
 2. **Unknown warning option**: Check if flag is GCC-specific (use platform detection)
 3. **X11 not found**: Ensure XQuartz is installed on macOS (`brew install --cask xquartz`)
 
+# Release workflow
+
+## Daily work - commit directly to main
+```bash
+git add <files>
+git commit -m "Description"
+git push origin main
+```
+
+## For releases
+```bash
+echo "6.4.0" > VERSION
+git add VERSION
+git commit -m "Bump version to 6.4.0"
+git tag -a v6.4.0 -m "Release v6.4.0: ..."
+git push origin main
+git push origin v6.4.0
+# Then create GitHub release - CI handles the rest!
+```
+
 ## Contributing
 
 When contributing code:
@@ -156,4 +176,3 @@ When contributing code:
 - [GNU C Extensions](https://gcc.gnu.org/onlinedocs/gcc/C-Extensions.html)
 - [Clang Compatibility](https://clang.llvm.org/docs/UsersManual.html#c)
 - [Standard C (C89/C99)](https://en.wikipedia.org/wiki/C99)
-
