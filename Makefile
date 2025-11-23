@@ -7,13 +7,20 @@
 # Use bash for targets that need bash features
 SHELL := /bin/bash
 
-.PHONY: all build clean install default help check setup install-deps uninstall uninstall-deps uninstall-rc uninstall-bashrc bin/diglog
+.PHONY: all build clean install default help check setup install-deps uninstall uninstall-deps uninstall-rc uninstall-bashrc
 
 # Sentinel file to track successful requirements check
 REQUIREMENTS_CHECKED := .requirements_checked
 
 # Default target
 default: all
+
+# Source file dependencies for rebuild detection
+PSYS_SRC_FILES := $(wildcard psys/src/*.c) $(wildcard psys/src/*.h)
+PSYS_INCLUDE_FILES := $(wildcard psys/include/p2c/*.h)
+PSYS_MAKEFILE := psys/src/Makefile
+LOG_SRC_FILES := $(wildcard log/src/*.c) $(wildcard log/src/*.h) $(wildcard log/src/ana/*.c) $(wildcard log/src/ana/*.h)
+LOG_MAKEFILE := log/src/Makefile
 
 # Build everything (psys must be built before log)
 all: build
@@ -24,15 +31,22 @@ build: $(REQUIREMENTS_CHECKED) psys/src/libp2c.a bin/diglog
 	@./scripts/path_setup.sh || true
 
 # Build psys libraries (required before building log)
-psys/src/libp2c.a:
+# Depend on all source files, include headers, and Makefile so rebuilds trigger on any change
+psys/src/libp2c.a: $(PSYS_SRC_FILES) $(PSYS_INCLUDE_FILES) $(PSYS_MAKEFILE)
 	@echo "Building psys libraries..."
 	@echo "Note: Format-overflow warnings from legacy 1980s code are expected and suppressed."
 	@set -o pipefail; $(MAKE) -C psys/src install 2>&1 | { grep -v "gets.*function is dangerous" || test $$? = 1; }
 
-# Build log tools (depends on psys)
-bin/diglog: psys/src/libp2c.a
+# Build log tools (depends on psys and all log source files)
+# Depend on all source files so any change triggers rebuild
+log/src/log: psys/src/libp2c.a $(LOG_SRC_FILES) $(LOG_MAKEFILE)
 	@echo "Building log tools..."
 	@echo "Note: Format-overflow warnings from legacy 1980s code are expected and suppressed."
+	@set -o pipefail; $(MAKE) -C log/src all 2>&1 | { grep -v "gets.*function is dangerous" || test $$? = 1; }
+
+# Install log binary to bin/diglog (copies from log/src/log)
+# Make will only run this if log/src/log is newer than bin/diglog
+bin/diglog: log/src/log
 	@set -o pipefail; $(MAKE) -C log/src install 2>&1 | { grep -v "gets.*function is dangerous" || test $$? = 1; }
 
 # Clean all build artifacts
