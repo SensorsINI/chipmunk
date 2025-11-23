@@ -1670,7 +1670,11 @@ Static Void xorcursor()
 	  break;
 
 	case copy_:
-	  choose_log_cursor(1);
+	  if (!strcmp(modename, "COPY")) {
+	    choose_log_cursor(5);  /* Plus sign for copy */
+	  } else {
+	    choose_log_cursor(1);  /* Four-way arrow for move/other */
+	  }
 	  break;
 
 	case boxcursor:
@@ -1690,7 +1694,21 @@ Static Void xorcursor()
 	} else if (gg.probemode) {
 	  choose_log_cursor(3);
 	} else {
-	  choose_log_cursor(0);
+	  /* Check edit mode for rotate/mirror cursors */
+	  switch (cureditmode) {
+	  case 1:  /* ROT - rotate mode */
+	    choose_log_cursor(6);
+	    break;
+	  case 2:  /* MIR- - horizontal mirror */
+	    choose_log_cursor(7);
+	    break;
+	  case 3:  /* MIR| - vertical mirror */
+	    choose_log_cursor(8);
+	    break;
+	  default:  /* Normal or CNFG */
+	    choose_log_cursor(0);
+	    break;
+	  }
 	}
       }
     } else {
@@ -1708,7 +1726,7 @@ Static Void xorcursor()
       switch (cursortype) {
 
       case grid:
-	/* Grid mode: hardware cursor is the normal arrow; overlay
+	/* Grid mode: use normal arrow cursor; overlay
 	 * a small XOR crosshair and full-screen grid lines. */
 	choose_log_cursor(0);
 	if (chairflag) {
@@ -1722,33 +1740,37 @@ Static Void xorcursor()
 	break;
 
       case delete__:
-	/* Delete mode: keep the standard hardware cursor; draw an XOR 'X'
-	 * around the pointer so it is clearly distinguishable. */
-	choose_log_cursor(0);
+	/* Delete mode: use X cursor (distinct hardware cursor).
+	 * XOR overlay can be removed since hardware cursor is clear. */
+	choose_log_cursor(2);
+	/* Optionally keep XOR overlay for extra emphasis:
 	m_drawline((long)(cursx - 5), (long)(cursy - 5),
 		   (long)(cursx + 5), (long)(cursy + 5));
 	m_drawline((long)(cursx - 5), (long)(cursy + 5),
 		   (long)(cursx + 5), (long)(cursy - 5));
+	*/
 	break;
 
       case copy_:
-	/* Copy mode: keep the standard hardware cursor; draw a long XOR
-	 * arrow tail to indicate copy direction. */
-	choose_log_cursor(0);
-	m_drawline((long)cursx, (long)cursy,
-		   (long)(cursx + 16), (long)(cursy - 4));
-	m_drawline((long)cursx, (long)cursy,
-		   (long)(cursx + 16), (long)(cursy + 4));
+	/* Copy/Move mode: distinguish based on mode name.
+	 * MOVE uses four-way arrow (fleur) - universal move cursor.
+	 * COPY uses plus sign - suggests "adding" a copy.
+	 * Other modes (YARD, OPNH, etc.) also use four-way arrow. */
+	if (!strcmp(modename, "COPY")) {
+	  choose_log_cursor(5);  /* Plus sign for copy */
+	} else {
+	  choose_log_cursor(1);  /* Four-way arrow for move/other */
+	}
 	break;
 
       case boxcursor:
-	/* Box mode: hardware cursor is normal arrow; the selection
+	/* Box mode: use crosshair cursor; the selection
 	 * rectangle is drawn via chairflag/rbandflag handling below. */
-	choose_log_cursor(0);
+	choose_log_cursor(4);
 	break;
 
       case paste:
-	/* Paste mode: show a XOR rectangle preview as before. */
+	/* Paste mode: show a XOR rectangle preview. */
 	choose_log_cursor(0);
 	cx0 = (cursx + gg.xoff + 2) / gg.scale;
 	cy0 = (cursy + gg.yoff + 2) / gg.scale;
@@ -1773,25 +1795,39 @@ Static Void xorcursor()
 	else
 	  m_bunny(cursx - 45L, cursy - 17L);
       } else if (gg.probemode) {
-	/* Probe mode: keep normal hardware cursor; highlight probed
-	 * node with other on-screen indicators. */
-	choose_log_cursor(0);
+	/* Probe mode: use question mark cursor to indicate probing. */
+	choose_log_cursor(3);
       } else {
-	/* Normal mode: standard arrow only. */
-	choose_log_cursor(0);
+	/* Check edit mode for rotate/mirror cursors */
+	switch (cureditmode) {
+	case 1:  /* ROT - rotate mode */
+	  choose_log_cursor(6);
+	  break;
+	case 2:  /* MIR- - horizontal mirror */
+	  choose_log_cursor(7);
+	  break;
+	case 3:  /* MIR| - vertical mirror */
+	  choose_log_cursor(8);
+	  break;
+	default:  /* Normal or CNFG */
+	  choose_log_cursor(0);
+	  break;
+	}
       }
     }
   }
   if (chairflag) {
     if (rbandflag) {
-      choose_log_cursor(0);
+      /* Wire drawing mode: keep current mode cursor */
+      /* choose_log_cursor(0); */
       if (vlsi)
 	m_color((long)gg.color.wire[curwcolor - log_wcol_normal]);
       else
-	m_color((long)gg.color.xwire);
+      m_color((long)gg.color.xwire);
       m_drawline((long)cursx1, (long)cursy1, (long)cursx2, (long)cursy2);
     } else {
-      choose_log_cursor(0);
+      /* Keep current mode cursor */
+      /* choose_log_cursor(0); */
     }
   }
   oldcursortype = cursortype;
@@ -5658,13 +5694,10 @@ Static Void pass()
 
   watchdog = timers_sysclock();
 
-  /* Ensure that the X11 hardware cursor for the main LOG window is always
-   * a visible shape (our arrow cursor), even if older soft-sprite code in
-   * the graphics library has tried to install a blank cursor. This is cheap
-   * and helps keep the mouse visible during heavy redraw/refresh operations,
-   * including scope/history updates. */
-  if (gg.showpage != 0)
-    choose_log_cursor(0);
+  /* Note: We no longer need to force cursor(0) here. The cursor system has
+   * been fixed to properly use hardware X11 cursors per-mode without
+   * interference from the old software sprite system. Forcing cursor(0) here
+   * would override the mode-specific cursors (fleur for move, X for delete, etc.) */
   gg.busyflag = false;
   gg.oldsimstate = gg.simstate;
   gg.oldsimstatetool = gg.simstatetool;
@@ -22799,7 +22832,7 @@ Static Void initialize()
   rabflag = false;
   firsttraining = true;
   training = false;
-  cureditmode = 1;
+  cureditmode = 4;  /* Start in CNFG mode (was 1=ROT) */
   *modename = '\0';
   modeflag = false;
   modetime = 0;

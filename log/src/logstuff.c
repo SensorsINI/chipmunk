@@ -574,10 +574,9 @@ void choose_log_cursor(int curs)
   cursor_shape = curs;
 
   if (use_xfont_cursor()) {
-    /* Use a single standard X font cursor (left_ptr) for all logical modes.
-     * Visual differences between modes are provided by XOR overlays in
-     * xorcursor(), keeping the hardware cursor itself simple and stable. */
-    m_choosecursor(1);
+    /* Use X font cursors with different shapes per mode.
+     * XOR overlays can still be drawn for additional visual feedback. */
+    m_choosecursor(curs);
   } else {
     /* Default: use Chipmunk's custom bitmap cursors. */
     switch (curs) {
@@ -729,5 +728,3 @@ int x, dx;
 {
   printf("nc_insLine not implemented\n");
 }
-
-

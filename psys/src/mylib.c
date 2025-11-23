@@ -395,7 +395,7 @@ static struct cursor {
   Cursor sub;
   Pixmap c1, c2;
   int xoff, yoff, w, h;
-} cursors[4];
+} cursors[9];  /* Increased to 9 for cursors[0..8]: includes rotate/mirror modes */
 
 #define AllColors DoRed | DoGreen | DoBlue
 XColor m_colors[ColorSets+1][ColorsInSet] = {
@@ -1258,12 +1258,12 @@ void WindowInitialize()
   blankcursor = XCreatePixmapCursor(m_display, p, p, &m_colors[0][m_black],
 				    &m_colors[0][m_black], 0, 0);
   Xfprintf(stderr, "cursors[0].sub = XCreatFontCursor()\n");
-  cursors[0].sub = XCreateFontCursor(m_display, XC_tcross);
+  cursors[0].sub = XCreateFontCursor(m_display, XC_left_ptr);
   Xfprintf(stderr, "XRecolorCursor(m_display, cursors[0].sub)\n");
   XRecolorCursor(m_display, cursors[0].sub, &m_colors[0][m_white],
                                             &m_colors[0][m_black]);
   Xfprintf(stderr, "cursors[1].sub = XCreatFontCursor()\n");
-  cursors[1].sub = XCreateFontCursor(m_display, XC_left_ptr);
+  cursors[1].sub = XCreateFontCursor(m_display, XC_fleur);
   Xfprintf(stderr, "XRecolorCursor(m_display, cursors[1].sub)\n");
   XRecolorCursor(m_display, cursors[1].sub, &m_colors[0][m_white],
                                             &m_colors[0][m_black]);
@@ -1273,9 +1273,34 @@ void WindowInitialize()
   XRecolorCursor(m_display, cursors[2].sub, &m_colors[0][15],
 		                            &m_colors[0][m_black]);
   Xfprintf(stderr, "cursors[3].sub = XCreatFontCursor()\n");
-  cursors[3].sub = XCreateFontCursor(m_display, XC_gobbler);
+  cursors[3].sub = XCreateFontCursor(m_display, XC_question_arrow);
   Xfprintf(stderr, "XRecolorCursor(m_display, cursors[3].sub)\n");
-  XRecolorCursor(m_display, cursors[3].sub, &m_colors[0][m_yellow],
+  XRecolorCursor(m_display, cursors[3].sub, &m_colors[0][m_white],
+		                            &m_colors[0][m_black]);
+  Xfprintf(stderr, "cursors[4].sub = XCreatFontCursor()\n");
+  cursors[4].sub = XCreateFontCursor(m_display, XC_crosshair);
+  Xfprintf(stderr, "XRecolorCursor(m_display, cursors[4].sub)\n");
+  XRecolorCursor(m_display, cursors[4].sub, &m_colors[0][m_white],
+		                            &m_colors[0][m_black]);
+  Xfprintf(stderr, "cursors[5].sub = XCreatFontCursor()\n");
+  cursors[5].sub = XCreateFontCursor(m_display, XC_plus);
+  Xfprintf(stderr, "XRecolorCursor(m_display, cursors[5].sub)\n");
+  XRecolorCursor(m_display, cursors[5].sub, &m_colors[0][m_white],
+		                            &m_colors[0][m_black]);
+  Xfprintf(stderr, "cursors[6].sub = XCreatFontCursor()\n");
+  cursors[6].sub = XCreateFontCursor(m_display, XC_exchange);
+  Xfprintf(stderr, "XRecolorCursor(m_display, cursors[6].sub)\n");
+  XRecolorCursor(m_display, cursors[6].sub, &m_colors[0][m_white],
+		                            &m_colors[0][m_black]);
+  Xfprintf(stderr, "cursors[7].sub = XCreatFontCursor()\n");
+  cursors[7].sub = XCreateFontCursor(m_display, XC_sb_h_double_arrow);
+  Xfprintf(stderr, "XRecolorCursor(m_display, cursors[7].sub)\n");
+  XRecolorCursor(m_display, cursors[7].sub, &m_colors[0][m_white],
+		                            &m_colors[0][m_black]);
+  Xfprintf(stderr, "cursors[8].sub = XCreatFontCursor()\n");
+  cursors[8].sub = XCreateFontCursor(m_display, XC_sb_v_double_arrow);
+  Xfprintf(stderr, "XRecolorCursor(m_display, cursors[8].sub)\n");
+  XRecolorCursor(m_display, cursors[8].sub, &m_colors[0][m_white],
 		                            &m_colors[0][m_black]);
   Xfprintf(stderr, "XDefineCursor()\n");
 /*  fprintf(stderr, "XDefineCursor() (0)\n");  */
@@ -1330,6 +1355,51 @@ void WindowInitialize()
   cursors[3].w = 10;
   cursors[3].h = 10;
 
+  Xfprintf(stderr, "cursors[4].c1 = XCreatePixmap()\n");
+  cursors[4].c1 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  Xfprintf(stderr, "cursors[4].c2 = XCreatePixmap()\n");
+  cursors[4].c2 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  cursors[4].xoff = 4;
+  cursors[4].yoff = 4;
+  cursors[4].w = 8;
+  cursors[4].h = 8;
+
+  Xfprintf(stderr, "cursors[5].c1 = XCreatePixmap()\n");
+  cursors[5].c1 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  Xfprintf(stderr, "cursors[5].c2 = XCreatePixmap()\n");
+  cursors[5].c2 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  cursors[5].xoff = 4;
+  cursors[5].yoff = 4;
+  cursors[5].w = 8;
+  cursors[5].h = 8;
+
+  Xfprintf(stderr, "cursors[6].c1 = XCreatePixmap()\n");
+  cursors[6].c1 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  Xfprintf(stderr, "cursors[6].c2 = XCreatePixmap()\n");
+  cursors[6].c2 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  cursors[6].xoff = 4;
+  cursors[6].yoff = 4;
+  cursors[6].w = 8;
+  cursors[6].h = 8;
+
+  Xfprintf(stderr, "cursors[7].c1 = XCreatePixmap()\n");
+  cursors[7].c1 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  Xfprintf(stderr, "cursors[7].c2 = XCreatePixmap()\n");
+  cursors[7].c2 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  cursors[7].xoff = 4;
+  cursors[7].yoff = 4;
+  cursors[7].w = 8;
+  cursors[7].h = 8;
+
+  Xfprintf(stderr, "cursors[8].c1 = XCreatePixmap()\n");
+  cursors[8].c1 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  Xfprintf(stderr, "cursors[8].c2 = XCreatePixmap()\n");
+  cursors[8].c2 = XCreatePixmap(m_display, m_window, 8, 8, RealWinDepth);
+  cursors[8].xoff = 4;
+  cursors[8].yoff = 4;
+  cursors[8].w = 8;
+  cursors[8].h = 8;
+
   Xfprintf(stderr, "tempgc = XCreateGC()\n");
   tempgc = XCreateGC(m_display, cursors[0].c1, 0, NULL);
   Xfprintf(stderr, "XSetPlaneMask(m_display, tempgc)\n");
@@ -1350,6 +1420,21 @@ void WindowInitialize()
   Xfprintf(stderr, "XFillRectangle(m_display, cursors[3].c1)\n");
   XFillRectangle(m_display, cursors[3].c1, tempgc, 0, 0, 11, 11);
 
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[4].c1)\n");
+  XFillRectangle(m_display, cursors[4].c1, tempgc, 0, 0, 8, 8);
+
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[5].c1)\n");
+  XFillRectangle(m_display, cursors[5].c1, tempgc, 0, 0, 8, 8);
+
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[6].c1)\n");
+  XFillRectangle(m_display, cursors[6].c1, tempgc, 0, 0, 8, 8);
+
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[7].c1)\n");
+  XFillRectangle(m_display, cursors[7].c1, tempgc, 0, 0, 8, 8);
+
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[8].c1)\n");
+  XFillRectangle(m_display, cursors[8].c1, tempgc, 0, 0, 8, 8);
+
   Xfprintf(stderr, "XSetForeground(m_display, tempgc, -1)\n");
   XSetForeground(m_display, tempgc, -1);
 
@@ -1364,6 +1449,21 @@ void WindowInitialize()
 
   Xfprintf(stderr, "XFillRectangle(m_display, cursors[3].c1)\n");
   XFillRectangle(m_display, cursors[3].c2, tempgc, 0, 0, 11, 11);
+
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[4].c2)\n");
+  XFillRectangle(m_display, cursors[4].c2, tempgc, 0, 0, 8, 8);
+
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[5].c2)\n");
+  XFillRectangle(m_display, cursors[5].c2, tempgc, 0, 0, 8, 8);
+
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[6].c2)\n");
+  XFillRectangle(m_display, cursors[6].c2, tempgc, 0, 0, 8, 8);
+
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[7].c2)\n");
+  XFillRectangle(m_display, cursors[7].c2, tempgc, 0, 0, 8, 8);
+
+  Xfprintf(stderr, "XFillRectangle(m_display, cursors[8].c2)\n");
+  XFillRectangle(m_display, cursors[8].c2, tempgc, 0, 0, 8, 8);
 
   Xfprintf(stderr, "XSetForeground(m_display, tempgc)\n");
   XSetForeground(m_display, tempgc, m_colors[0][m_white].pixel);
@@ -2220,10 +2320,13 @@ static struct {
   unsigned int cursor;
   unsigned long color;
 } xcursors[] = {
-  { XC_tcross, 15 },
-  { XC_left_ptr, m_white },
-  { XC_X_cursor, 15 },
-  { XC_gobbler, m_yellow },
+  { XC_left_ptr, m_white },      // 0: Normal/Arrow
+  { XC_fleur, m_white },          // 1: Move (four-way arrow)  
+  { XC_X_cursor, 15 },            // 2: Delete (X)
+  { XC_question_arrow, m_white }, // 3: Probe
+  { XC_crosshair, m_white },      // 4: Box selection
+  { XC_icon, m_white },           // 5: Copy (could add separately)
+  { XC_tcross, m_white },         // 6: Grid (if needed)
 };
 
 void m_choosecursor(n)
@@ -2233,19 +2336,14 @@ int n;
 
   Mfprintf(stderr, "m_choosecursor(%d)\n", n);
 
-  if ((n >= 0) && (n <= 3) && (n != curcursor)) {
-    if (cursor_is_on) {
-      m_nocursor();
-      curcursor = n;
-/*      fprintf(stderr, "m_cursor(%d, %d)   from m_choosecursor\n",
-	      mouse.x, mouse.y);  */
-      m_cursor(mouse.x, mouse.y);
-    } else {
-      curcursor = n;
-/*      fprintf(stderr, "XDefineCursor() (%d)\n", n);  */
-      Xfprintf(stderr, "XDefineCursor()  (m_choosecursor)\n");
-      XDefineCursor(m_display, m_window, cursors[n].sub);
-    }
+  if ((n >= 0) && (n <= 8) && (n != curcursor)) {
+    curcursor = n;
+    /* When using X font cursors, always use hardware cursor (XDefineCursor)
+     * and never activate the software cursor sprite system (m_cursor/m_nocursor).
+     * The software sprite system causes flickering when combined with hardware
+     * cursors. Only use software cursors if explicitly using bitmap mode. */
+    Xfprintf(stderr, "XDefineCursor()  (m_choosecursor)\n");
+    XDefineCursor(m_display, m_window, cursors[n].sub);
   }
 /*
     newcursor = XCreateFontCursor(m_display, xcursors[n].cursor);
