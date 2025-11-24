@@ -1,9 +1,9 @@
 
-32: System Vdd 5
+32: System Vdd 3.3
 32: System Vstep .1
-32: System Highest 7
-32: System Lowest  -2
-32: System Dtmax 1e-4
+32: System Highest 3.8
+32: System Lowest  -.5
+32: System Dtmax 1e-5
 32: System Timerelax 1e-20
 32: System Timemin 1e-40
 32: System Tol 0.000001
