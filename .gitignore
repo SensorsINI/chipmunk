@@ -54,3 +54,4 @@ RELEASE_v*
 .github/drafts
 amon10/ # test chip
 chip_collection/ # collection of pcmp chips
+downloads.py
