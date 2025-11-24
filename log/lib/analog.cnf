@@ -11,6 +11,6 @@ get     physical devtechp devtechn runspec
 get     opamp wramp hwr fwr hres ganglion
 get     ginst* pwl moscap
 
-menu    vdd gnd pfet7t nfet7t mmeter vswitch iswitch1
+menu    vdd gnd pfet7t nfet7t capfloat mmeter vswitch iscope vdiff idiff iswitch1 iswitch2 
 
 
