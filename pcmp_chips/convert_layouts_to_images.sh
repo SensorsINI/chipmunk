@@ -5,9 +5,10 @@ CHIP_DIR="$HOME/chip_collection"
 IMAGE_LIST="$CHIP_DIR/layout_images.txt"
 CONVERTED_FILES="$CHIP_DIR/converted_mosis_files.txt"
 NO_PNAME_FILES="$CHIP_DIR/no_pname_mosis_files.txt"
+DESCRIPTION_MAP="$CHIP_DIR/chip_descriptions.txt"
 ERROR_LOG="$CHIP_DIR/layout_conversion_errors.log"
 SCRIPT_DIR="/home/tobi/chipmunk/pcmp_chips"
-LAYER_PROPS="$CHIP_DIR/klayout-red-green-yellow-fets-3.lyp"
+LAYER_PROPS="$CHIP_DIR/klayout-red-green-yellow-fets.lyp"
 KLAYOUT="flatpak run de.klayout.KLayout"
 
 # Image parameters
@@ -24,6 +25,7 @@ rm -f /tmp/pname_seen_*
 > "$IMAGE_LIST"
 > "$CONVERTED_FILES"
 > "$NO_PNAME_FILES"
+> "$DESCRIPTION_MAP"
 > "$ERROR_LOG"
 
 echo "Starting unique MOSIS layout conversion at $(date)" | tee -a "$ERROR_LOG"
@@ -35,11 +37,18 @@ else
     echo "File limit: unlimited" | tee -a "$ERROR_LOG"
 fi
 
-# Function to extract P-NAME from MOSIS file
+# Function to extract P-NAME from MOSIS file (ignore any leading whitespace)
 extract_pname_from_mosis() {
     local mosis_file="$1"
-    # Extract P-NAME value, remove leading/trailing whitespace
-    grep -m1 "^  P-NAME:" "$mosis_file" | sed 's/^  P-NAME:[[:space:]]*//' | tr -d '\r' || echo ""
+    # Extract P-NAME value, ignore any leading whitespace
+    grep -m1 -E "^[[:space:]]*P-NAME:" "$mosis_file" | sed -E 's/^[[:space:]]*P-NAME:[[:space:]]*//' | tr -d '\r' || echo ""
+}
+
+# Function to extract DESCRIPTION from MOSIS file (ignore any leading whitespace)
+extract_description_from_mosis() {
+    local mosis_file="$1"
+    # Extract DESCRIPTION value, ignore any leading whitespace
+    grep -m1 -E "^[[:space:]]*DESCRIPTION:" "$mosis_file" | sed -E 's/^[[:space:]]*DESCRIPTION:[[:space:]]*//' | tr -d '\r' || echo ""
 }
 
 # Function to extract CIF from MOSIS file
@@ -137,17 +146,35 @@ while read mosis_file; do
                         echo "[$FILES_PROCESSED/$FILE_LIMIT] Created thumbnail: $thumbnail_file"
                         echo "$png_file" >> "$IMAGE_LIST"
                         echo "$mosis_file" >> "$CONVERTED_FILES"
+                        
+                        # Extract and log DESCRIPTION if present
+                        description=$(extract_description_from_mosis "$mosis_file")
+                        if [ -n "$description" ]; then
+                            echo "$pname|$description" >> "$DESCRIPTION_MAP"
+                        fi
                     else
                         echo "Warning: Thumbnail not created for $mosis_file" >> "$ERROR_LOG"
                         # Still log the full image even if thumbnail failed
                         echo "$png_file" >> "$IMAGE_LIST"
                         echo "$mosis_file" >> "$CONVERTED_FILES"
+                        
+                        # Extract and log DESCRIPTION if present
+                        description=$(extract_description_from_mosis "$mosis_file")
+                        if [ -n "$description" ]; then
+                            echo "$pname|$description" >> "$DESCRIPTION_MAP"
+                        fi
                     fi
                 else
                     echo "Warning: Error creating thumbnail for: $mosis_file" >> "$ERROR_LOG"
                     # Still log the full image even if thumbnail failed
                     echo "$png_file" >> "$IMAGE_LIST"
                     echo "$mosis_file" >> "$CONVERTED_FILES"
+                    
+                    # Extract and log DESCRIPTION if present
+                    description=$(extract_description_from_mosis "$mosis_file")
+                    if [ -n "$description" ]; then
+                        echo "$pname|$description" >> "$DESCRIPTION_MAP"
+                    fi
                 fi
             else
                 echo "Error: PNG not created for $mosis_file" >> "$ERROR_LOG"
@@ -169,10 +196,12 @@ rm -f /tmp/pname_seen_*
 echo "Conversion complete at $(date)" | tee -a "$ERROR_LOG"
 echo "Total unique chips processed: $FILES_PROCESSED" | tee -a "$ERROR_LOG"
 echo "Images created: $(wc -l < "$IMAGE_LIST")" | tee -a "$ERROR_LOG"
+echo "Chips with descriptions: $(wc -l < "$DESCRIPTION_MAP")" | tee -a "$ERROR_LOG"
 echo "MOSIS files without P-NAME: $(wc -l < "$NO_PNAME_FILES")" | tee -a "$ERROR_LOG"
 echo "" | tee -a "$ERROR_LOG"
 echo "Output files:" | tee -a "$ERROR_LOG"
 echo "  - Converted MOSIS files: $CONVERTED_FILES" | tee -a "$ERROR_LOG"
 echo "  - Generated PNG images: $IMAGE_LIST" | tee -a "$ERROR_LOG"
+echo "  - Chip descriptions: $DESCRIPTION_MAP" | tee -a "$ERROR_LOG"
 echo "  - Files without P-NAME: $NO_PNAME_FILES" | tee -a "$ERROR_LOG"
 echo "  - Errors: $ERROR_LOG" | tee -a "$ERROR_LOG"
