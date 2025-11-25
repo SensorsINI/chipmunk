@@ -42,6 +42,16 @@ the Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
  * - Default window size: 1280x960 (can be customized via ~/.chipmunk)
  * - Screen coordinates start at (0,0) in top-left corner
  *
+ * WINDOW RESIZE HANDLING (November 2025):
+ * ---------------------------------------
+ * Window resizing is handled through a coordinated approach:
+ * 1. X11 layer (mylib.c) updates m_across/m_down and returns event code 251
+ * 2. inkey2() silently consumes code 251 events without blocking or graphics calls
+ * 3. pen() detects size change (across != m_across) and calls update_screen_layout()
+ * 4. update_screen_layout() recalculates all layout variables (baseline, line1, etc.)
+ * 5. Natural redraw cycle updates display with new layout
+ * This approach avoids deadlocks, busy-wait loops, and timing issues. See RESIZE_FIX.md.
+ *
  * VIEWPORT TO CIRCUIT MAPPING:
  * ---------------------------
  * The viewport shows a window into the circuit coordinate space. The mapping is:
@@ -3202,6 +3212,8 @@ Static boolean pollkbd2()
   return (nk_keybufsize() != 0 || pushedbackkey != '\0');
 }
 
+/* Forward declaration */
+Static Void update_screen_layout PV();  /* Window resize fix - Nov 2025 */
 
 Static Void pen()
 {
@@ -3237,6 +3249,10 @@ Static Void pen()
     gg.t0 = gg.t;
     m_readpen(&gg.t);
     show_events();
+    /* Update layout if window size changed */
+    if (across != m_across || down != m_down) {
+      update_screen_layout();
+    }
     gg.stillnear = (gg.stillnear && gg.t.near_);
     gg.incircuit = (gg.t.y < baseline && gg.showpage > 0);
   RECOVER(try3);
@@ -3442,19 +3458,67 @@ Static Void dbglog_inkey2(const char *msg, int raw, int mapped) {
   }
 }
 
+/* Update screen layout variables after window resize */
+/*
+ * update_screen_layout() - Recalculate screen layout after window resize
+ * 
+ * Called from pen() when window size changes (across != m_across).
+ * Updates all layout-dependent variables including menu positioning,
+ * histogram dimensions, and group spacing.
+ * 
+ * Part of window resize fix (November 2025) - See RESIZE_FIX.md
+ */
+Static Void update_screen_layout()
+{
+  txacross = nc_curWindow->width - 1;
+  txdown = nc_curWindow->height - 1;
+  across = m_across;
+  down = m_down;
+  baseline = down - 53;   /* Position of baseline on screen */
+  line1 = down - 43;   /* Position of first text line in menu */
+  line2 = down - 23;   /* Position of second text line in menu */
+  histdown = down - 26;
+  histdivsacross = (double)(across - histleft) / histdivision;
+  histvalrange = (double)histdown / histdivision * 5;
+  kindgroupsize = (across - 160) / kindgroupspacing;
+  kindgroupleft = (across - kindgroupsize * kindgroupspacing) / 2;
+  kindgroupright = kindgroupleft + kindgroupsize * kindgroupspacing;
+  kindgroupstart = kindgroupleft + kindgroupspacing / 2;
+  kindgroupbase = (baseline + down) / 2;
+}
+
+/*
+ * inkey2() - Get keyboard input, consuming resize events
+ * 
+ * Returns: Character code for keyboard input
+ * 
+ * Special handling for window resize (November 2025 fix):
+ * - ConfigureNotify events arrive as code 251
+ * - These are silently consumed without calling graphics functions
+ * - Loop continues until non-resize key is found
+ * - Layout updates happen later in pen() function to avoid deadlocks
+ * - Uses blocking nk_getkey() call (no busy-wait polling needed)
+ * 
+ * See RESIZE_FIX.md for details on why graphics calls from here cause hangs.
+ */
 Static Char inkey2()
 {
   Char ch;
   static int debug_esc = -1;  /* -1: uninit, 0: off, 1: on */
 
+  /* Loop to consume all pending resize events without recursion */
   do {
-  } while (!pollkbd2());
-  if (pushedbackkey != '\0') {
-    realkey = pushedbackkey;
-    pushedbackkey = '\0';
-  } else
-    realkey = nk_getkey();
-  ch = realkey;
+    /* Get next key - pushedbackkey takes precedence, otherwise block for input */
+    if (pushedbackkey != '\0') {
+      realkey = pushedbackkey;
+      pushedbackkey = '\0';
+    } else
+      realkey = nk_getkey();  /* This blocks until input is available - no busy-wait! */
+    ch = realkey;
+    /* If it's a resize event (251), loop continues to get next event */
+    /* Layout updates happen in pen() function, not here */
+  } while ((unsigned char)ch == 251);
+  
   /* Normalize Escape (ASCII 27) to EXEC (^C, ASCII 3) for mode cancel */
   if ((unsigned char)ch == 27) {
     ch = '\003';

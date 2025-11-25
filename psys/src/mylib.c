@@ -22,6 +22,13 @@
  * - Map Ctrl+C to '\003' for consistency
  * - Update window dimensions when resized via update_window_size()
  *
+ * IMPORTANT - WINDOW RESIZE FIX (November 2025):
+ * ----------------------------------------------
+ * ConfigureNotify events are CONSUMED (not put back on queue with XPutBackEvent).
+ * This prevents infinite event recycling that caused 100% CPU busy-wait loops.
+ * m_pollkbd() includes 10ms throttling when no events available to prevent
+ * tight polling loops while maintaining responsiveness. See RESIZE_FIX.md.
+ *
  * MOUSE/PEN INPUT:
  * ---------------
  * - m_readpen(pen): Gets mouse position and button state
@@ -141,6 +148,7 @@
 # include <sys/time.h>
 #elif defined(linux)
 # include <sys/time.h>
+# include <unistd.h>
 #else
 # include <time.h>
 #endif
@@ -5381,24 +5389,61 @@ m_tablet_info *pen;
 }
 
 
+/*
+ * m_pollkbd() - Non-blocking keyboard/event poll
+ * 
+ * Returns: 1 if event available, 0 if no events
+ * 
+ * IMPORTANT - BUSY-WAIT FIX (November 2025):
+ * ------------------------------------------
+ * This function is called in tight loops throughout the application (from pen()).
+ * Without throttling, it causes 100% CPU busy-wait when no events are available
+ * (recvmsg() returns EAGAIN repeatedly). The fix:
+ * 
+ * 1. Check for events with XCheckMaskEvent() (non-blocking)
+ * 2. If events available: process immediately, reset throttle timer
+ * 3. If NO events: check if we polled recently (< 10ms ago)
+ *    - If yes: sleep 10ms before returning to prevent busy-wait
+ *    - If no: return immediately (first poll in a while)
+ * 
+ * This maintains responsiveness (events processed immediately) while preventing
+ * the CPU-burning busy-wait loop. See RESIZE_FIX.md for analysis.
+ */
 boolean m_pollkbd()
 {
   XEvent event;
   char buf[10];
   KeySym sym;
+  static struct timeval last_no_event = {0, 0};
+  struct timeval now;
+  long elapsed_us;
 
   Kfprintf(stderr, "m_pollkbd()\n");
   
 #ifdef EXTRA_BUFFERING
   flush_buffers();
 #endif /* EXTRA_BUFFERING */
+  
   for (;;) {
     Xfprintf(stderr, "XCheckMaskEvent()\n");
     if (! XCheckMaskEvent(m_display, KeyPressMask |
                                      ExposureMask |
-                                     StructureNotifyMask, &event))
-      return(0); /* sleep(1) could be added here for load-average problem */
-                 /* but may be too drastic (MDG)                          */
+                                     StructureNotifyMask, &event)) {
+      /* No events available. Throttle to prevent busy-wait loop.
+       * If we checked recently (< 10ms ago) and found nothing, sleep before returning. */
+      gettimeofday(&now, NULL);
+      if (last_no_event.tv_sec != 0) {
+        elapsed_us = (now.tv_sec - last_no_event.tv_sec) * 1000000 + 
+                     (now.tv_usec - last_no_event.tv_usec);
+        if (elapsed_us < 10000) {  /* Less than 10ms since last check with no events */
+          usleep(10000);  /* Sleep 10ms to prevent busy-wait */
+        }
+      }
+      last_no_event = now;
+      return(0);
+    }
+    /* Event available - reset throttle timer and process it */
+    last_no_event.tv_sec = 0;
     switch (event.type) {
     case KeyPress: 
       /* Check for arrow keys via KeySym first - XLookupString may return 0 for them */
@@ -5435,9 +5480,11 @@ boolean m_pollkbd()
       if ((event.xconfigure.window == m_window) &&
 	  ((event.xconfigure.width != m_across+1) ||
 	   (event.xconfigure.height != m_down+1))) {
+	m_across = event.xconfigure.width - 1;
+	m_down = event.xconfigure.height - 1;
 	update_window_size(event.xconfigure.width, event.xconfigure.height);
-	Xfprintf(stderr, "XPutBackEvent()  (m_pollkbd() resize event)\n");
-	XPutBackEvent(m_display, &event);
+	/* Don't put back - consume the event to avoid busy loop */
+	Xfprintf(stderr, "m_pollkbd() resize event - consumed\n");
 	return(1);
       }
       break;
@@ -5649,12 +5696,13 @@ uchar m_inkey()
 	       (event.xconfigure.window == m_window) &&
 	       ((event.xconfigure.width != m_across+1) ||
 		(event.xconfigure.height != m_down+1))) {
-      update_window_size(event.xconfigure.width, event.xconfigure.height);
-#ifdef SHOW_CONFIGURE_EVENTS
-      fprintf(stderr, "m_inkey(): ConfigureNotify event detected\n");
-#endif /*SHOW_CONFIGURE_EVENTS*/
       m_across = event.xconfigure.width - 1;
       m_down = event.xconfigure.height - 1;
+      update_window_size(event.xconfigure.width, event.xconfigure.height);
+      /* Consume event - don't put back to avoid busy loop */
+#ifdef SHOW_CONFIGURE_EVENTS
+      fprintf(stderr, "m_inkey(): ConfigureNotify consumed\n");
+#endif /*SHOW_CONFIGURE_EVENTS*/
       return((uchar) 251);
     }
   }
@@ -5855,11 +5903,11 @@ uchar m_inkeyn()
 		 (event.xconfigure.window == m_window) &&
 		 ((event.xconfigure.width != m_across+1) ||
 		  (event.xconfigure.height != m_down+1))) {
-	update_window_size(event.xconfigure.width, event.xconfigure.height);
 	m_across = event.xconfigure.width - 1;
 	m_down = event.xconfigure.height - 1;
-	Xfprintf(stderr, "XPutBackEvent()  (m_inkeyn() resize event)\n");
-	XPutBackEvent(m_display, &event);
+	update_window_size(event.xconfigure.width, event.xconfigure.height);
+	/* Consume event - don't put back to avoid busy loop */
+	Xfprintf(stderr, "m_inkeyn() resize consumed\n");
 	return((uchar) 251);
       }
     }
@@ -6056,14 +6104,13 @@ uchar m_testkey()
 	       (event.xconfigure.window == m_window) &&
 	       ((event.xconfigure.width != m_across+1) ||
 		(event.xconfigure.height != m_down+1))) {
-      update_window_size(event.xconfigure.width, event.xconfigure.height);
-#ifdef SHOW_CONFIGURE_EVENTS
-      fprintf(stderr, "m_testkey(): ConfigureNotify event detected\n");
-#endif/* SHOW_CONFIGURE_EVENTS*/
       m_across = event.xconfigure.width - 1;
       m_down = event.xconfigure.height - 1;
-      Xfprintf(stderr, "XPutBackEvent()  (m_testkey() resize event)\n");
-      XPutBackEvent(m_display, &event);
+      update_window_size(event.xconfigure.width, event.xconfigure.height);
+      /* Consume event - don't put back to avoid busy loop */
+#ifdef SHOW_CONFIGURE_EVENTS
+      fprintf(stderr, "m_testkey(): ConfigureNotify consumed\n");
+#endif/* SHOW_CONFIGURE_EVENTS*/
       return((uchar) 251);
     }
   }

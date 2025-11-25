@@ -4275,6 +4275,7 @@ Static Void drawcmd()
 
         case 251:             /* X ConfigureNotify (resize) event */
 	  autoscale(1L);
+	  needrefr = true;  /* Force refresh after resize */
           break;         
 
 	case ' ':
