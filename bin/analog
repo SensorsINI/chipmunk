@@ -6,15 +6,16 @@ CHIPMUNK_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export LOGLIB="${CHIPMUNK_DIR}/log/lib"
 export CHIPMUNK_MODE=analog
 
-# Handle help options (check for --help or standalone -h, but not -h with argument)
-if [ "$1" = "--help" ] || ([ "$1" = "-h" ] && [ -z "$2" ]); then
+# Handle help option (only --help, not -h, so -h can be used for home directory)
+if [ "$1" = "--help" ]; then
     echo "Analog Circuit Simulator - Chipmunk Tools"
     echo ""
     echo "Usage:"
     echo "  ./bin/analog [options] [circuit_file.lgf]"
     echo ""
     echo "Options:"
-    echo "  -h, --help    Show this help message"
+    echo "  --help        Show this help message"
+    echo "  -h <dir>      Specify home directory for searching gate files, config files, etc."
     echo "  -c <file>     Specify configuration file (default: analog.cnf)"
     echo "  -v            Vanilla LOG mode (no CNF file)"
     echo "  -x <display>  Specify X display name (e.g., :0.0 or hostname:0)"
@@ -23,8 +24,8 @@ if [ "$1" = "--help" ] || ([ "$1" = "-h" ] && [ -z "$2" ]); then
     echo "  -t <file>     Specify trace file for trace output (alternative to -z)"
     echo "  -r <tool>     Run a specific tool immediately on startup (non-interactive)"
     echo ""
-    echo "Note: -h is used for help in this wrapper. For home directory, use the"
-    echo "      underlying diglog command directly or set LOGLIB environment variable."
+    echo "Note: The LOGLIB environment variable can also be used to specify the library"
+    echo "      directory for configuration files and gate libraries."
     echo ""
     echo "Examples:"
     echo "  ./bin/analog                           # Start with lesson1.lgf (for beginners)"
@@ -32,8 +33,9 @@ if [ "$1" = "--help" ] || ([ "$1" = "-h" ] && [ -z "$2" ]); then
     echo "  ./bin/analog -c log/lib/mos_example.cnf # Use custom configuration"
     echo "  ./bin/analog -v                        # Start without configuration file"
     echo "  ./bin/analog -z trace.txt circuit.lgf  # Enable trace mode with output file"
+    echo "  ./bin/analog -h ~/my_log_lib           # Use custom home directory"
     echo ""
-    echo "For more information, see: https://john-lazzaro.github.io/chipmunk/document/log/index.html"
+    echo "For more information, see: https://github.com/sensorsINI/chipmunk/blob/main/HELP.md"
     exit 0
 fi
 

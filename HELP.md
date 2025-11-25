@@ -7,7 +7,7 @@
    - The tutorial circuit (`lesson1.lgf`) opens automatically for new users; open any other file with `./bin/analog file.lgf`. 
    - Default window size is 1280x960 (automatically saved and restored between sessions)
    - To override, add to `~/.Xresources`: `mylib.geometry: 1600x1200+0+0`
-2. **Get command-line help**: `./bin/analog --help`
+2. **Get command-line help**: `./bin/analog --help` (use `--help`, not `-h`, as `-h` is used for home directory)
 3. **In-program help**: Press `?` key or click the HELP button
 
 ## Core Interaction Model
@@ -107,7 +107,8 @@ Use custom config: `./bin/analog -c log/lib/custom.cnf`
 
 The `analog` command supports the following options:
 
-- **`-h, --help`**: Show help message and exit
+- **`--help`**: Show help message and exit (use `--help`, not `-h`, as `-h` is used for home directory)
+- **`-h <dir>`**: Specify home directory for searching gate files, config files, etc. (default: `~/log` if not specified)
 - **`-c <file>`**: Specify configuration file (default: `analog.cnf` if not specified)
 - **`-v`**: Vanilla LOG mode (no CNF file loaded)
 - **`-x <display>`**: Specify X display name (e.g., `:0.0` or `hostname:0`)
@@ -115,7 +116,6 @@ The `analog` command supports the following options:
 - **`-d <file>`**: Specify dump file for debug output
 - **`-t <file>`**: Specify trace file for trace output (alternative to `-z <file>`)
 - **`-r <tool>`**: Run a specific tool immediately on startup (non-interactive mode)
-- **`-h <dir>`**: Specify home directory for searching gate files, config files, etc. (Note: conflicts with `-h` for help; use `--help` for help)
 
 **Examples:**
 ```bash
@@ -125,6 +125,7 @@ The `analog` command supports the following options:
 ./bin/analog -v                        # Start without any configuration file
 ./bin/analog -z trace.txt circuit.lgf  # Enable trace mode with output file
 ./bin/analog -x :1.0                   # Use display :1.0
+./bin/analog -h ~/my_log_lib           # Use custom home directory
 ```
 
 ### How `-c` Option Works
@@ -140,7 +141,7 @@ According to the [official documentation](https://john-lazzaro.github.io/chipmun
 - LOG looks for a configuration file in this order:
   1. Program-specific name: `analog.cnf` (if running `analog`) or `diglog.cnf` (if running `diglog`)
   2. Fallback: `log.cnf`
-  3. Search order: current directory → home directory (`~/log`) → `/lib/log` (or `$LOGLIB`)
+  3. Search order: current directory → home directory (set by `-h <dir>`, default: `~/log`) → `$LOGLIB` directory (set by wrapper script to `log/lib` by default)
 
 **Recommended approach for custom configurations:**
 To view a legacy design, it might be necessary to provide a custom .cnf file.
@@ -157,7 +158,7 @@ menu gate1 gate2 gate3          { Customize menu gates }
 **Note on INCLUDE paths:**
 - **Relative paths** (e.g., `genlog.cnf`) are resolved relative to the current working directory, which is `log/lib` after the wrapper script runs. This is the recommended approach.
 - **Absolute paths** (starting with `/`) will work but are not portable across systems (e.g., `/home/user/chipmunk/log/lib/genlog.cnf`).
-- Paths are searched in this order: current directory → launch directory → home directory (`~/log`) → LOGLIB directory (`log/lib`).
+- Paths are searched in this order: current directory → launch directory → home directory (set by `-h <dir>`, default: `~/log`) → `$LOGLIB` directory (set by wrapper script to `log/lib` by default).
 
 **Note**: The wrapper script (`bin/analog`) automatically loads `analog.cnf` by default. To use a completely different configuration, specify it with `-c` or use `-v` for vanilla mode (no config file).
 
@@ -170,6 +171,16 @@ Chipmunk-specific environment variables that affect behavior:
 These are set by the `bin/analog` wrapper script. You typically don't need to set these manually unless running `diglog` directly:
 
 - **`CHIPMUNK_LAUNCH_DIR`**: Automatically set to your current working directory. Used to resolve relative file paths for `:load` and `:save` commands, ensuring files are loaded/saved relative to where you launched the program, not the internal working directory.
+
+- **`LOGLIB`**: Automatically set to `${CHIPMUNK_DIR}/log/lib` by the wrapper script. This environment variable specifies the directory where LOG searches for configuration files (`.cnf` files) and gate library files. The wrapper script sets this automatically, but you can override it if needed:
+  ```bash
+  # Use a custom library directory
+  LOGLIB=/path/to/custom/lib ./bin/analog circuit.lgf
+  ```
+  
+  **Note**: The `-h <dir>` command-line option sets the home directory (default: `~/log`) which is used for searching user-specific files, while `LOGLIB` specifies the library directory for system configuration and gate files. Both affect where LOG searches for files, but serve different purposes:
+  - **`-h <dir>`**: User home directory for personal gate files and configurations (searched after current directory)
+  - **`LOGLIB`**: System library directory for default configuration files and gate libraries (searched last in the path)
 
 ### Display Options
 
