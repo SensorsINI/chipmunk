@@ -3,14 +3,14 @@
 # Chip Layout Inspector - open all layout images in viewer for arrow-key navigation
 # Usage: ./inspect_chip_layouts.sh [image_list_file] [--thumbnails]
 
-IMAGE_LIST="${1:-/home/tobi/chip_collection/layout_images.txt}"
+IMAGE_LIST="${1:-/home/tobi/pcmp_chips/layout_images.txt}"
 USE_THUMBNAILS=false
 
 # Check for --thumbnails flag
 if [ "$2" = "--thumbnails" ] || [ "$1" = "--thumbnails" ]; then
     USE_THUMBNAILS=true
     if [ "$1" = "--thumbnails" ]; then
-        IMAGE_LIST="/home/tobi/chip_collection/layout_images.txt"
+        IMAGE_LIST="/home/tobi/pcmp_chips/layout_images.txt"
     fi
 fi
 

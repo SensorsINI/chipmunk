@@ -1,7 +1,7 @@
 #!/bin/bash
 
-SOURCE_DIR="$HOME/chip_collection"
-DEST_DIR="$HOME/Dropbox/chip_collection_images"
+SOURCE_DIR="$HOME/pcmp_chips"
+DEST_DIR="$HOME/Dropbox/pcmp_chips_images"
 IMAGE_LIST="$SOURCE_DIR/layout_images.txt"
 
 # Create destination directory

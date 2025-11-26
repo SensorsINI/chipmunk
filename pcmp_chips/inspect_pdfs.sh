@@ -3,7 +3,7 @@
 # PDF Inspector - iterate through PDFs one at a time
 # Usage: ./inspect_pdfs.sh [pdf_list_file]
 
-PDF_LIST="${1:-/home/tobi/chipmunk/chip_collection/converted_pdfs.txt}"
+PDF_LIST="${1:-/home/tobi/chipmunk/pcmp_chips/converted_pdfs.txt}"
 
 # Check if PDF list exists
 if [ ! -f "$PDF_LIST" ]; then

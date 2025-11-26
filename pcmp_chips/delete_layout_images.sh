@@ -7,7 +7,8 @@
 #   ./delete_layout_images.sh "chip008*"   # Delete chip008*_layout.png files
 #   ./delete_layout_images.sh "amon*"      # Delete amon*_layout.png files
 
-CHIP_DIR="$HOME/chip_collection"
+CHIP_DIR="$HOME/pcmp_home"
+SCRIPT_DIR="/home/tobi/chipmunk/pcmp_chips"
 PATTERN="${1:-*}"  # Default to all files if no pattern provided
 
 # Build the full patterns for both main images and thumbnails

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Output files
-OUTPUT_DIR="/home/tobi/chipmunk/chip_collection"
+OUTPUT_DIR="/home/tobi/pcmp_chips"
 PDF_LIST="$OUTPUT_DIR/converted_pdfs.txt"
 ERROR_LOG="$OUTPUT_DIR/conversion_errors.log"
 

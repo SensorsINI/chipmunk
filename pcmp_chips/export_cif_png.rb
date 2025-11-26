@@ -45,11 +45,30 @@ if top_cells.size > 0
 end
 
 # Load layer properties from session if available
+# This applies our custom layer mapping for newer chips
 if session_file && File.exist?(session_file)
   begin
     lv.load_layer_props(session_file)
+    puts "Loaded layer properties from: #{session_file}"
   rescue => e
     puts "Warning: Could not load session file: #{e.message}"
+  end
+end
+
+# Add missing layers - this adds layer entries for any layers in the layout
+# that aren't already in the layer properties (e.g., older CIF files with LCP, LCM, etc.)
+# This is equivalent to using "Add Other Layers" from the context menu in the layers panel
+begin
+  lv.add_missing_layers
+  puts "Added missing layers to layer properties"
+rescue => e
+  puts "Warning: Could not add missing layers: #{e.message}"
+  # Fallback: try init_layer_props if add_missing_layers doesn't exist
+  begin
+    lv.init_layer_props
+    puts "Initialized layer properties (fallback)"
+  rescue => e2
+    puts "Warning: Could not initialize layer properties: #{e2.message}"
   end
 end
 
