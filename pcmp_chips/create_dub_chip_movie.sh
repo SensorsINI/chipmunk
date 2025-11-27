@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to create MP4 movie from chip layout thumbnails synchronized to dub music beats
-# Frame rate varies dynamically with the beat, with pauses at certain points
+# Chips change exactly at each beat, synchronized with audio
 # Audio fades out over 1 second at the end
 #
 # Usage: ./create_dub_chip_movie.sh [output_file] [audio_segment_start] [duration]
@@ -16,10 +16,12 @@ IMAGE_LIST="${IMAGE_LIST:-$CHIP_DIR/layout_images.txt}"
 AUDIO_FILE="${AUDIO_FILE:-$CHIP_DIR/04 Reaching Dub.m4a}"
 OUTPUT_FILE="${1:-${OUTPUT_FILE:-$HOME/pcmp_home/pcmp_chips_dub.mp4}}"
 AUDIO_START="${2:-0}"  # Start time in audio (seconds)
-VIDEO_DURATION="${3:-45}"  # Target video duration (seconds)
+VIDEO_DURATION="${3:-0}"  # Target video duration (seconds)
 VIDEO_FPS="${VIDEO_FPS:-60}"  # Video frame rate (fps) - MP4 container frame rate
-CRF="${CRF:-23}"
+CRF="${CRF:-23}" # Compression quality (0-51, 0 is best quality)
 FILE_LIMIT="${FILE_LIMIT:-0}"  # 0 = no limit, otherwise stop after N files
+BEAT_THRESHOLD="${BEAT_THRESHOLD:-0.6}"  # Beat detection threshold for aubioonset (0.0-1.0, lower = more sensitive)
+# Note: No minimum dwell time - chips are shown for the actual beat interval duration
 
 # Check dependencies
 if ! command -v convert >/dev/null 2>&1; then
@@ -60,7 +62,8 @@ fi
 
 # Create temporary directories
 TEMP_DIR=$(mktemp -d)
-ANNOTATED_DIR="$TEMP_DIR/annotated"
+CACHE_DIR="/tmp/pcmp_chip_movie"
+ANNOTATED_DIR="$CACHE_DIR/annotated"
 SEGMENTS_DIR="$TEMP_DIR/segments"
 mkdir -p "$ANNOTATED_DIR" "$SEGMENTS_DIR"
 
@@ -73,12 +76,53 @@ cleanup() {
         echo "Interrupted! Cleaning up..."
         sleep 2
     fi
+    # Only remove temp dir, keep cache
     rm -rf "$TEMP_DIR"
+    # Note: Annotated images in $ANNOTATED_DIR are kept for caching
 }
 
 # Trap signals
 trap 'INTERRUPTED=true; cleanup; exit 130' INT TERM
 trap 'cleanup' EXIT
+
+# No minimum dwell time - use actual beat interval durations
+
+# Handle VIDEO_DURATION=0 as special case: use all frames or entire song, whichever is shorter
+ORIGINAL_VIDEO_DURATION="$VIDEO_DURATION"
+if [ "$VIDEO_DURATION" = "0" ]; then
+    echo "VIDEO_DURATION=0: Will use all available chips or full audio, whichever is shorter"
+    
+    # Get audio file duration
+    if command -v ffprobe >/dev/null 2>&1; then
+        AUDIO_FULL_DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$AUDIO_FILE" 2>/dev/null)
+        if [ -n "$AUDIO_FULL_DURATION" ] && [ "$AUDIO_FULL_DURATION" != "N/A" ]; then
+            # Calculate available duration from AUDIO_START to end
+            AVAILABLE_AUDIO_DURATION=$(echo "$AUDIO_FULL_DURATION - $AUDIO_START" | bc -l 2>/dev/null)
+            if [ "$(echo "$AVAILABLE_AUDIO_DURATION <= 0" | bc -l 2>/dev/null || echo "1")" = "1" ]; then
+                echo "Error: AUDIO_START ($AUDIO_START) is beyond audio file duration ($AUDIO_FULL_DURATION)"
+                exit 1
+            fi
+            echo "  Audio file duration: ${AUDIO_FULL_DURATION}s"
+            echo "  Available from AUDIO_START: ${AVAILABLE_AUDIO_DURATION}s"
+            # Use the full available audio duration
+            VIDEO_DURATION="$AVAILABLE_AUDIO_DURATION"
+            echo "  Using full available audio: ${VIDEO_DURATION}s"
+        else
+            echo "Warning: Could not determine audio duration, defaulting to 45s"
+            VIDEO_DURATION=45
+        fi
+    else
+        echo "Warning: ffprobe not available, cannot determine audio duration, defaulting to 45s"
+        VIDEO_DURATION=45
+    fi
+elif [ -z "$VIDEO_DURATION" ] || [ "$(echo "$VIDEO_DURATION <= 0" | bc -l 2>/dev/null || echo "1")" = "1" ]; then
+    echo "Error: VIDEO_DURATION must be a positive number or 0 (got: ${VIDEO_DURATION})"
+    echo "Usage: $0 [output_file] [audio_start] [duration]"
+    echo "  duration: positive number (seconds) or 0 (use all frames/entire song, whichever is shorter)"
+    echo "Example: $0 output.mp4 0 45"
+    echo "Example: $0 output.mp4 0 0  # Use all available chips or full audio"
+    exit 1
+fi
 
 echo "Creating dub-synchronized chip layout movie"
 echo "==========================================="
@@ -88,6 +132,8 @@ echo "Audio file: $AUDIO_FILE"
 echo "Audio start: ${AUDIO_START}s"
 echo "Video duration: ${VIDEO_DURATION}s"
 echo "Video frame rate: ${VIDEO_FPS} fps (MP4 container rate)"
+echo "Beat detection threshold: ${BEAT_THRESHOLD} (lower = more sensitive, more beats)"
+echo "Timing: One chip per beat interval (no minimum dwell time)"
 echo "Output file: $OUTPUT_FILE"
 echo "Compression (CRF): $CRF"
 if [ "$FILE_LIMIT" -gt 0 ]; then
@@ -220,9 +266,83 @@ overlay_title_block() {
     rm -f "$year_img" "$year_shadow" "$chip_img" "$chip_shadow" "$user_img" "$user_shadow"
 }
 
-# Step 1: Extract audio segment and detect beats
-echo "Step 1: Extracting audio segment and detecting beats..."
-AUDIO_END=$((AUDIO_START + VIDEO_DURATION))
+# Calculate timing statistics for user confirmation
+echo "Calculating timing statistics..."
+ESTIMATED_IMAGES=$(wc -l < "$IMAGE_LIST" 2>/dev/null || echo "0")
+
+echo ""
+echo "==========================================="
+echo "MOVIE TIMING SUMMARY"
+echo "==========================================="
+echo "Video duration: ${VIDEO_DURATION}s"
+echo "Audio start: ${AUDIO_START}s"
+echo "Available images: $ESTIMATED_IMAGES"
+echo "Timing: Chips change exactly at each beat"
+echo ""
+echo "Strategy:"
+echo "  - Extract audio segment first"
+echo "  - Detect beats directly from extracted audio segment"
+echo "  - Create segments starting at each beat (aligned with audio)"
+echo "  - Chips will be randomly subsampled to match number of beats"
+echo ""
+echo "==========================================="
+if false; then
+    # Check if USE_ALL_FRAMES environment variable is set
+    if [ "${USE_ALL_FRAMES:-false}" = "true" ]; then
+        # Non-interactive mode: automatically use all frames
+        SUBSAMPLE_IMAGES=false
+        # Update VIDEO_DURATION to estimated duration (add 10% buffer for safety)
+        NEW_DURATION=$(echo "scale=0; ($ESTIMATED_VIDEO_DURATION * 1.1) / 1" | bc -l 2>/dev/null)
+        if [ -n "$NEW_DURATION" ] && [ "$NEW_DURATION" != "0" ] && [ "$(echo "$NEW_DURATION > 0" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+            VIDEO_DURATION="$NEW_DURATION"
+        else
+            # Fallback: use minimum duration + 20% buffer
+            VIDEO_DURATION=$(echo "scale=0; ($MIN_VIDEO_DURATION * 1.2) / 1" | bc -l 2>/dev/null || echo "30")
+        fi
+        # Ensure VIDEO_DURATION is a valid positive number
+        if [ -z "$VIDEO_DURATION" ] || [ "$VIDEO_DURATION" = "0" ] || [ "$(echo "$VIDEO_DURATION <= 0" | bc -l 2>/dev/null || echo "1")" = "1" ]; then
+            VIDEO_DURATION="30"
+        fi
+        echo "USE_ALL_FRAMES=true: Automatically using all ${ESTIMATED_IMAGES} images"
+        echo "Video duration adjusted to ~${VIDEO_DURATION}s (estimated ${ESTIMATED_VIDEO_DURATION}s + 10% buffer)"
+    else
+        # Interactive mode: prompt user
+        echo "Choose an option:"
+        echo "  1) Randomly subsample images to fit ${VIDEO_DURATION}s duration"
+        echo "  2) Use all images (estimated ~${ESTIMATED_VIDEO_DURATION}s duration, minimum ${MIN_VIDEO_DURATION}s)"
+        read -p "Enter choice (1 or 2): " -n 1 -r
+        echo ""
+        if [[ $REPLY == "1" ]]; then
+            SUBSAMPLE_IMAGES=true
+            TARGET_IMAGE_COUNT=$MAX_IMAGES_IN_DURATION
+            echo "Will randomly subsample to ~${TARGET_IMAGE_COUNT} images"
+        elif [[ $REPLY == "2" ]]; then
+            SUBSAMPLE_IMAGES=false
+            # Update VIDEO_DURATION to estimated duration (add 10% buffer for safety)
+            NEW_DURATION=$(echo "scale=0; ($ESTIMATED_VIDEO_DURATION * 1.1) / 1" | bc -l 2>/dev/null)
+            if [ -n "$NEW_DURATION" ] && [ "$NEW_DURATION" != "0" ] && [ "$(echo "$NEW_DURATION > 0" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+                VIDEO_DURATION="$NEW_DURATION"
+            else
+                # Fallback: use minimum duration + 20% buffer
+                VIDEO_DURATION=$(echo "scale=0; ($MIN_VIDEO_DURATION * 1.2) / 1" | bc -l 2>/dev/null || echo "30")
+            fi
+            # Ensure VIDEO_DURATION is a valid positive number
+            if [ -z "$VIDEO_DURATION" ] || [ "$VIDEO_DURATION" = "0" ] || [ "$(echo "$VIDEO_DURATION <= 0" | bc -l 2>/dev/null || echo "1")" = "1" ]; then
+                VIDEO_DURATION="30"
+            fi
+            echo "Will use all ${ESTIMATED_IMAGES} images"
+            echo "Video duration adjusted to ~${VIDEO_DURATION}s (estimated ${ESTIMATED_VIDEO_DURATION}s + 10% buffer)"
+        else
+            echo "Invalid choice, aborting"
+            exit 0
+        fi
+    fi
+fi
+# No prompt needed - automatically proceed with beat-synchronized timing
+echo ""
+
+# Step 1: Extract audio segment first
+echo "Step 1: Extracting audio segment (${VIDEO_DURATION}s from ${AUDIO_START}s)..."
 EXTRACTED_AUDIO="$TEMP_DIR/audio_segment.m4a"
 
 # Extract audio segment
@@ -233,148 +353,53 @@ if [ ! -f "$EXTRACTED_AUDIO" ] || [ ! -s "$EXTRACTED_AUDIO" ]; then
     exit 1
 fi
 
-# Detect beats using aubio
+# Step 2: Detect beats directly from extracted audio segment
+# Beats will be relative to 0 (start of the extracted segment)
+echo "Step 2: Detecting beats in audio segment..."
+echo "  Using threshold: ${BEAT_THRESHOLD} (lower = more sensitive, detects more beats)"
 BEATS_FILE="$TEMP_DIR/beats.txt"
-echo "Detecting beats in audio..."
-# Use default onset detection (hfc - High Frequency Content)
-# -t 0.3 is threshold (lower = more detections, higher = fewer)
-aubioonset -i "$EXTRACTED_AUDIO" -t 0.3 > "$BEATS_FILE" 2>/dev/null
+
+# Run aubioonset and capture both output and errors for debugging
+aubioonset -i "$EXTRACTED_AUDIO" -t "$BEAT_THRESHOLD" > "$BEATS_FILE" 2>"$TEMP_DIR/aubioonset_errors.txt"
 
 if [ ! -s "$BEATS_FILE" ]; then
-    echo "Warning: No beats detected, using uniform timing"
-    # Create uniform beats every 0.5 seconds as fallback
+    echo "Warning: No beats detected with threshold ${BEAT_THRESHOLD}, using uniform timing"
+    if [ -s "$TEMP_DIR/aubioonset_errors.txt" ]; then
+        echo "  aubioonset errors:"
+        cat "$TEMP_DIR/aubioonset_errors.txt" | sed 's/^/    /'
+    fi
     seq 0 0.5 "$VIDEO_DURATION" > "$BEATS_FILE"
 fi
 
 BEAT_COUNT=$(wc -l < "$BEATS_FILE")
-echo "Detected $BEAT_COUNT beats"
+echo "  Detected $BEAT_COUNT beats using threshold ${BEAT_THRESHOLD}"
+if [ "$BEAT_COUNT" -gt 0 ] && [ "$BEAT_COUNT" -lt 10 ]; then
+    echo "  First few beat times:"
+    head -n 5 "$BEATS_FILE" | awk '{printf "    %.3fs\n", $1}'
+fi
 echo ""
 
-# Step 2: Build sorted image list (same as original script)
-echo "Step 2: Building sorted image list..."
-SORTED_LIST="$TEMP_DIR/sorted_images.txt"
-> "$SORTED_LIST"
+# Step 3: Calculate segments from beats (one segment starts at each beat)
+echo "Step 3: Creating segments from beats..."
+BEAT_INTERVALS="$TEMP_DIR/beat_intervals.txt"
+> "$BEAT_INTERVALS"
 
-declare -A csv_normalized_date
-declare -A csv_username
-declare -A csv_pname
-
-while IFS='|' read -r pname normalized_date username; do
-    if [ -n "$pname" ]; then
-        csv_normalized_date["$pname"]="$normalized_date"
-        csv_username["$pname"]="$username"
-        csv_pname["$pname"]="$pname"
-    fi
-done < <(python3 -c "
-import csv
+# Use Python to calculate beat intervals and determine how many chips we need
+# This script creates intervals from beat times, ensuring no quantization errors accumulate.
+# FRAME QUANTIZATION: To prevent accumulated quantization errors, we quantize absolute
+# beat times to frame boundaries, then calculate frame counts. This ensures continuity
+# and prevents errors from accumulating across segments.
+PYTHON_BEAT_SCRIPT="$TEMP_DIR/calculate_beat_intervals.py"
+cat > "$PYTHON_BEAT_SCRIPT" <<PYTHON_EOF
 import sys
+import math
 
-with open('$CSV_DATABASE', 'r', encoding='utf-8') as f:
-    reader = csv.reader(f)
-    next(reader)
-    for row in reader:
-        if len(row) >= 16:
-            pname = row[3].strip()
-            username = row[2].strip()
-            normalized_date = row[14].strip()
-            if pname:
-                print(f'{pname}|{normalized_date}|{username}')
-")
+beats_file = "$BEATS_FILE"
+intervals_file = "$BEAT_INTERVALS"
+video_duration = float("$VIDEO_DURATION")
+video_fps = float("$VIDEO_FPS")
 
-TOTAL=0
-PROCESSED=0
-NO_DATE=0
-MISSING=0
-
-while IFS= read -r full_image; do
-    ((TOTAL++))
-    
-    if [ "$FILE_LIMIT" -gt 0 ] && [ "$PROCESSED" -ge "$FILE_LIMIT" ]; then
-        break
-    fi
-    
-    thumbnail="${full_image/_layout.png/_layout_thumbnail.png}"
-    
-    if [ ! -f "$thumbnail" ]; then
-        ((MISSING++))
-        continue
-    fi
-    
-    basename=$(basename "$full_image" "_layout.png")
-    pname="$basename"
-    
-    normalized_date="${csv_normalized_date[$pname]:-}"
-    username="${csv_username[$pname]:-}"
-    
-    if [ -z "$normalized_date" ]; then
-        ((NO_DATE++))
-        normalized_date="9999-99-99"
-    fi
-    
-    year=$(extract_year "$normalized_date")
-    if [ -z "$year" ] || [ "$year" = "9999" ]; then
-        year="?"
-    fi
-    
-    chip_name=$(extract_chip_name "$pname")
-    sort_date="$normalized_date"
-    
-    echo "$sort_date|$year|$chip_name|$username|$pname|$thumbnail" >> "$SORTED_LIST"
-    
-    ((PROCESSED++))
-done < "$IMAGE_LIST"
-
-sort -t'|' -k1,1 "$SORTED_LIST" > "$SORTED_LIST.sorted"
-
-TOTAL_IMAGES=$(wc -l < "$SORTED_LIST.sorted")
-echo "Found $TOTAL images, processed $PROCESSED, $MISSING missing thumbnails, $NO_DATE with no date"
-echo ""
-
-# Step 3: Create annotated images (same as original)
-echo "Step 3: Creating annotated images..."
-rm -f "$ANNOTATED_DIR"/*.png
-COUNT=0
-
-while IFS='|' read -r sort_date year chip_name username pname thumbnail; do
-    ((COUNT++))
-    numbered_name=$(printf "%06d.png" $COUNT)
-    annotated_image="$ANNOTATED_DIR/$numbered_name"
-    overlay_title_block "$thumbnail" "$annotated_image" "$year" "$chip_name" "$username"
-    
-    if [ $((COUNT % 50)) -eq 0 ]; then
-        echo "Annotated $COUNT/$TOTAL_IMAGES images..."
-    fi
-done < "$SORTED_LIST.sorted"
-
-echo "Created $COUNT annotated images"
-echo ""
-
-# Step 4: Generate timing map from beats
-echo "Step 4: Generating frame timing map from beats..."
-TIMING_MAP="$TEMP_DIR/timing_map.txt"
-> "$TIMING_MAP"
-
-# Read beats and create timing map
-# Strategy: Assign frames to beat intervals
-# - Fast transition on beats (0.1-0.2s per frame)
-# - Slower between beats (0.3-0.5s per frame)
-# - Pause every 4th beat (0.8-1.2s)
-
-PYTHON_SCRIPT="$TEMP_DIR/generate_timing.py"
-cat > "$PYTHON_SCRIPT" << 'PYTHON_EOF'
-import sys
-
-if len(sys.argv) < 5:
-    print("Error: Not enough arguments", file=sys.stderr)
-    sys.exit(1)
-
-beats_file = sys.argv[1]
-timing_map_file = sys.argv[2]
-total_images = int(sys.argv[3])
-video_duration = float(sys.argv[4])
-PYTHON_EOF
-
-cat >> "$PYTHON_SCRIPT" << 'PYTHON_EOF'
+frame_interval = 1.0 / video_fps
 
 # Read beats
 beats = []
@@ -391,147 +416,521 @@ try:
             except (ValueError, TypeError):
                 continue
 except (IOError, OSError) as e:
-    print(f"Warning: Could not read beats file: {e}", file=sys.stderr)
-    beats = []
+    print(f"Error reading beats file: {e}", file=sys.stderr)
+    sys.exit(1)
 
-# If no beats, create uniform timing
-if not beats:
-    interval = video_duration / total_images
-    with open(timing_map_file, 'w') as f:
-        for i in range(total_images):
-            frame_time = i * interval
-            duration = interval
-            f.write(f"{i}|{duration}|0\n")
-    sys.exit(0)
+# Sort beats (should already be sorted, but ensure)
+beats = sorted(set(beats))
 
-# Add end time
-beats.append(video_duration)
+# FRAME QUANTIZATION STRATEGY:
+# To minimize accumulated quantization errors, we quantize absolute times to frame
+# boundaries, then calculate frame counts. This ensures:
+# 1. Continuity: Each segment starts exactly where previous ended (at frame boundary)
+# 2. No accumulation: Errors don't compound because we use absolute quantized times
+# 3. Perfect total: Total frames = quantized(video_duration) * fps (exact match)
 
-# Assign frames to beat intervals
-# Strategy: Ensure all images are used by distributing them across intervals
-# Faster transitions on beats, slower between, with pauses every 4th beat
+# Quantize video duration to frame boundary
+video_duration_frames = round(video_duration * video_fps)
+quantized_video_duration = video_duration_frames / video_fps
 
-frame_idx = 0
-pause_counter = 0
-total_intervals = len(beats) - 1
+# Quantize all beats to frame boundaries
+quantized_beats = [round(beat * video_fps) / video_fps for beat in beats]
+quantized_beats = sorted(set(quantized_beats))
 
-# Calculate target frames per interval to use all images
-# Account for pauses (every 4th beat doesn't advance frame)
-normal_intervals = total_intervals - (total_intervals // 4)  # Exclude pause intervals
-if normal_intervals > 0:
-    target_frames_per_interval = total_images / normal_intervals
-else:
-    target_frames_per_interval = 1
+# Create intervals using quantized times
+intervals = []
 
-with open(timing_map_file, 'w') as f:
-    for i in range(total_intervals):
-        beat_start = beats[i]
-        beat_end = beats[i + 1]
-        interval_duration = beat_end - beat_start
+# If first beat is not at 0, add initial segment from 0 to first beat
+if quantized_beats and quantized_beats[0] > 0:
+    start_frame = 0
+    end_frame = round(quantized_beats[0] * video_fps)
+    frame_count = end_frame - start_frame
+    quantized_start = start_frame / video_fps
+    quantized_end = end_frame / video_fps
+    quantized_duration = frame_count / video_fps
+    intervals.append((quantized_start, quantized_end, quantized_duration, frame_count))
+
+# Create segments starting at each quantized beat
+for i in range(len(quantized_beats)):
+    start_time = quantized_beats[i]
+    start_frame = round(start_time * video_fps)
+    
+    # End is next beat, or quantized video duration if last beat
+    if i + 1 < len(quantized_beats):
+        end_time = quantized_beats[i + 1]
+    else:
+        end_time = quantized_video_duration
+    
+    end_frame = round(end_time * video_fps)
+    frame_count = end_frame - start_frame
+    
+    if frame_count > 0:
+        quantized_duration = frame_count / video_fps
+        intervals.append((start_time, end_time, quantized_duration, frame_count))
+
+# Validate intervals to ensure no gaps, overlaps, or quantization errors
+if intervals:
+    # Check continuity: each interval should start where previous ended
+    prev_end = None
+    prev_end_frame = None
+    for start, end, duration, frame_count in intervals:
+        start_frame = round(start * video_fps)
+        end_frame = round(end * video_fps)
         
-        # Determine if this is a pause (every 4th beat)
-        is_pause = (pause_counter % 4 == 3)
-        pause_counter += 1
-        
-        if is_pause:
-            # Pause: show same frame for longer (don't advance frame_idx)
-            if frame_idx < total_images:
-                pause_duration = min(1.2, interval_duration * 1.5)
-                f.write(f"{frame_idx}|{pause_duration}|1\n")
-        else:
-            # Normal: transition frames, ensuring we use all images
-            # Count how many normal intervals remain (excluding pauses)
-            remaining_normal_intervals = 0
-            for j in range(i + 1, total_intervals):
-                if (j % 4) != 3:  # Not a pause
-                    remaining_normal_intervals += 1
-            
-            remaining_frames = total_images - frame_idx
-            
-            if remaining_normal_intervals > 0 and remaining_frames > 0:
-                # Calculate frames needed to use all remaining images
-                frames_needed = max(1, int(remaining_frames / remaining_normal_intervals))
-                # But also consider interval duration (don't go too fast - max ~6 fps)
-                duration_based_max = max(1, int(interval_duration * 6))
-                frames_in_interval = min(frames_needed, duration_based_max, remaining_frames)
-            else:
-                # Last interval or no remaining: use all remaining frames
-                frames_in_interval = max(1, remaining_frames)
-            
-            frames_in_interval = min(frames_in_interval, total_images - frame_idx)
-            
-            if frames_in_interval > 0:
-                frame_duration = interval_duration / frames_in_interval
-                # Faster on beat (first frame), slower after
-                for j in range(frames_in_interval):
-                    if frame_idx >= total_images:
-                        break
-                    if j == 0:
-                        # Beat frame: faster
-                        duration = min(0.15, frame_duration * 0.6)
-                    else:
-                        # Between beats: slower
-                        duration = max(0.3, frame_duration * 1.2)
-                    f.write(f"{frame_idx}|{duration}|0\n")
-                    frame_idx += 1
+        if prev_end_frame is not None:
+            gap_frames = start_frame - prev_end_frame
+            if gap_frames != 0:
+                gap_time = gap_frames / video_fps
+                print(f"WARNING: Gap/overlap detected: {gap_frames} frames ({gap_time:.9f}s)", file=sys.stderr)
+        prev_end = end
+        prev_end_frame = end_frame
+    
+    # Check total duration matches quantized video duration
+    total_frames = sum(iv[3] for iv in intervals)
+    total_duration = total_frames / video_fps
+    duration_error = abs(total_duration - quantized_video_duration)
+    if duration_error > frame_interval / 2:  # Allow half frame tolerance
+        print(f"WARNING: Total frames ({total_frames}) doesn't match expected ({video_duration_frames}), error: {duration_error:.9f}s", file=sys.stderr)
+    
+    # Check first interval starts at 0
+    if intervals[0][0] != 0.0:
+        print(f"WARNING: First interval starts at {intervals[0][0]}, not 0.0", file=sys.stderr)
+    
+    # Check last interval ends at quantized video duration
+    if abs(intervals[-1][1] - quantized_video_duration) > frame_interval / 2:
+        print(f"WARNING: Last interval ends at {intervals[-1][1]:.9f}, not {quantized_video_duration:.9f}", file=sys.stderr)
 
-# Fill remaining frames if any
-remaining = total_images - frame_idx
-if remaining > 0:
-    avg_duration = (video_duration - sum(float(l.split('|')[1]) for l in open(timing_map_file).readlines())) / remaining
-    with open(timing_map_file, 'a') as f:
-        for i in range(remaining):
-            f.write(f"{frame_idx}|{avg_duration}|0\n")
-            frame_idx += 1
+# Write intervals: start_time|end_time|duration|frame_count
+# Format: quantized start, quantized end, quantized duration, frame count
+# Using 6 decimal places for times, integer frame counts
+with open(intervals_file, 'w') as f:
+    for start, end, duration, frame_count in intervals:
+        f.write(f"{start:.6f}|{end:.6f}|{duration:.6f}|{frame_count}\n")
+
+# Calculate required chip count
+required_chips = len(intervals)
+total_frames = sum(iv[3] for iv in intervals)
+print(f"Required chips: {required_chips}")
+print(f"  - Chips change exactly at each beat (no pauses)")
+print(f"  - Number of intervals: {len(intervals)}")
+print(f"  - Total frames: {total_frames} (quantized duration: {total_frames / video_fps:.6f}s)")
+print(f"  - Frame quantization: beats quantized to frame boundaries ({frame_interval:.9f}s per frame)")
+if intervals:
+    if quantized_beats and quantized_beats[0] > 0:
+        first_frames = intervals[0][3]
+        print(f"  - First interval: 0.0s to {quantized_beats[0]:.3f}s ({first_frames} frames)")
+    min_frames = min(iv[3] for iv in intervals)
+    max_frames = max(iv[3] for iv in intervals)
+    min_duration = min_frames / video_fps
+    max_duration = max_frames / video_fps
+    print(f"  - Frame count range: {min_frames}-{max_frames} frames ({min_duration:.3f}s to {max_duration:.3f}s)")
+
+# No minimum dwell time check - use all intervals as-is
+
+sys.exit(0)
 PYTHON_EOF
 
-python3 "$PYTHON_SCRIPT" "$BEATS_FILE" "$TIMING_MAP" "$COUNT" "$VIDEO_DURATION" 2>&1
+python3 "$PYTHON_BEAT_SCRIPT" 2>&1
+REQUIRED_CHIPS=$(python3 -c "
+beats_file = '$BEATS_FILE'
+video_duration = float('$VIDEO_DURATION')
 
-echo "Generated timing map for $COUNT frames"
+beats = []
+with open(beats_file, 'r') as f:
+    for line in f:
+        line = line.strip()
+        if line:
+            try:
+                beat = float(line)
+                if 0 <= beat <= video_duration:
+                    beats.append(beat)
+            except:
+                pass
+
+beats = sorted(set(beats))
+# Count intervals: one per interval between consecutive beats
+# Plus one initial interval if first beat is not at 0
+if beats:
+    required = len(beats)  # One interval per beat (each beat to next)
+    if beats[0] > 0:
+        required += 1  # Add initial interval from 0 to first beat
+else:
+    required = 1  # At least one chip if no beats
+print(required)
+")
+echo "Chips required for beat-synchronized video: $REQUIRED_CHIPS"
 echo ""
 
-# Step 5: Create video segments with variable timing
-echo "Step 5: Creating video segments..."
+# Step 4: Load sorted CSV and randomly sample chips
+echo "Step 4: Loading sorted chip database and selecting chips..."
+CSV_SORTED="${CSV_SORTED:-$CHIP_DIR/chip_database_sorted.csv}"
+
+if [ ! -f "$CSV_SORTED" ]; then
+    echo "Warning: Sorted CSV not found at $CSV_SORTED"
+    echo "Creating sorted CSV from $CSV_DATABASE..."
+    "$(dirname "$0")/sort_chip_database_by_date.sh"
+    CSV_SORTED="$CHIP_DIR/chip_database_sorted.csv"
+fi
+
+if [ ! -f "$CSV_SORTED" ]; then
+    echo "Error: Could not create or find sorted CSV file"
+    exit 1
+fi
+
+# Extract chips from sorted CSV and match with image list
+SORTED_LIST="$TEMP_DIR/selected_chips.txt"
+> "$SORTED_LIST"
+
+# Load CSV data into associative arrays
+declare -A csv_normalized_date
+declare -A csv_username
+declare -A csv_pname
+declare -A csv_path
+
+# Read sorted CSV and extract chip info
+# Write Python script to file to ensure proper output capture
+PYTHON_CHIP_SCRIPT="$TEMP_DIR/extract_chips.py"
+cat > "$PYTHON_CHIP_SCRIPT" <<PYTHON_EOF
+import csv
+import sys
+import os
+
+csv_file = "$CSV_SORTED"
+image_list_file = "$IMAGE_LIST"
+
+# Load image list to check which chips have images
+chips_with_images = set()
+if os.path.exists(image_list_file):
+    with open(image_list_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.endswith('_layout.png'):
+                basename = os.path.basename(line)
+                pname = basename.replace('_layout.png', '')
+                chips_with_images.add(pname)
+
+# Read sorted CSV and output chips that have images
+with open(csv_file, 'r', encoding='utf-8') as f:
+    reader = csv.reader(f)
+    next(reader)  # Skip header
+    for row in reader:
+        if len(row) >= 16:
+            pname = row[3].strip()
+            username = row[2].strip()
+            normalized_date = row[14].strip()
+            
+            if pname and pname in chips_with_images:
+                # Find thumbnail path
+                thumbnail = None
+                with open(image_list_file, 'r') as imgf:
+                    for img_line in imgf:
+                        img_line = img_line.strip()
+                        if img_line.endswith(f"{pname}_layout.png"):
+                            thumbnail = img_line.replace('_layout.png', '_layout_thumbnail.png')
+                            if os.path.exists(thumbnail):
+                                print(f"{normalized_date}|{username}|{pname}|{thumbnail}")
+                                break
+PYTHON_EOF
+
+# Execute Python script and capture output
+python3 "$PYTHON_CHIP_SCRIPT" > "$TEMP_DIR/all_available_chips.txt" 2>&1
+
+TOTAL_AVAILABLE=$(wc -l < "$TEMP_DIR/all_available_chips.txt" 2>/dev/null || echo "0")
+if [ "$TOTAL_AVAILABLE" -eq 0 ]; then
+    echo "ERROR: No chips found!" >&2
+    echo "Python script output:" >&2
+    head -20 "$TEMP_DIR/all_available_chips.txt" >&2
+    exit 1
+fi
+echo "Found $TOTAL_AVAILABLE chips with images in sorted database"
+
+# Randomly subsample to required number of chips, maintaining chronological order
+# Preserve index (line number) in SORTED_LIST for easy cache lookup
+# If VIDEO_DURATION was originally 0, use all available chips (don't subsample)
+USE_ALL_CHIPS=false
+if [ "${ORIGINAL_VIDEO_DURATION:-}" = "0" ]; then
+    USE_ALL_CHIPS=true
+fi
+
+if [ "$USE_ALL_CHIPS" = true ]; then
+    echo "Using all $TOTAL_AVAILABLE available chips (VIDEO_DURATION=0 mode)"
+    # Add index to all chips: index|normalized_date|username|pname|thumbnail
+    awk '{print NR "|" $0}' "$TEMP_DIR/all_available_chips.txt" > "$SORTED_LIST"
+    # Update REQUIRED_CHIPS to match available chips (will reuse if needed)
+    if [ "$TOTAL_AVAILABLE" -lt "$REQUIRED_CHIPS" ]; then
+        echo "  Note: Have $TOTAL_AVAILABLE chips but $REQUIRED_CHIPS beats - will reuse chips"
+    else
+        REQUIRED_CHIPS="$TOTAL_AVAILABLE"
+    fi
+elif [ "$TOTAL_AVAILABLE" -gt "$REQUIRED_CHIPS" ]; then
+    echo "Randomly subsampling from $TOTAL_AVAILABLE to $REQUIRED_CHIPS chips (maintaining date order)..."
+    # Add line numbers, shuffle, take first N, then sort by line number to maintain order
+    # Keep index in output: index|normalized_date|username|pname|thumbnail
+    awk '{print NR "|" $0}' "$TEMP_DIR/all_available_chips.txt" | shuf | head -n "$REQUIRED_CHIPS" | sort -t'|' -k1,1n > "$SORTED_LIST"
+else
+    echo "Using all $TOTAL_AVAILABLE available chips (need $REQUIRED_CHIPS)"
+    # Add index to all chips: index|normalized_date|username|pname|thumbnail
+    awk '{print NR "|" $0}' "$TEMP_DIR/all_available_chips.txt" > "$SORTED_LIST"
+    REQUIRED_CHIPS="$TOTAL_AVAILABLE"
+fi
+
+TOTAL_SELECTED=$(wc -l < "$SORTED_LIST")
+echo "Selected $TOTAL_SELECTED chips for video"
+echo ""
+
+# Extract year and chip name for each selected chip
+# SORTED_LIST format: index|normalized_date|username|pname|thumbnail
+SELECTED_LIST="$TEMP_DIR/selected_chips_annotated.txt"
+> "$SELECTED_LIST"
+chip_idx=0
+while IFS='|' read -r chip_index normalized_date username pname thumbnail; do
+    ((chip_idx++))
+    year=$(extract_year "$normalized_date")
+    if [ -z "$year" ] || [ "$year" = "9999" ]; then
+        year="?"
+    fi
+    chip_name=$(extract_chip_name "$pname")
+    echo "$chip_idx|$normalized_date|$year|$chip_name|$username|$pname|$thumbnail" >> "$SELECTED_LIST"
+done < "$SORTED_LIST"
+
+# Debug: Show selected chips
+echo "DEBUG: Selected chips (first 5 and last 5):"
+head -n 5 "$SELECTED_LIST" | awk -F'|' '{printf "  Chip %d: %s (%s) - %s\n", $1, $4, $3, $2}'
+if [ "$TOTAL_SELECTED" -gt 10 ]; then
+    echo "  ..."
+    tail -n 5 "$SELECTED_LIST" | awk -F'|' '{printf "  Chip %d: %s (%s) - %s\n", $1, $4, $3, $2}'
+fi
+echo ""
+
+# Step 5: Create annotated images cache for ALL chips (one-time, reusable)
+echo "Step 5: Creating annotated images cache for all chips..."
+mkdir -p "$ANNOTATED_DIR"
+
+# Cache all available chips using numerical index based on sorted CSV order
+# Cache files: 000001.png, 000002.png, etc. (index corresponds to line number in all_available_chips.txt)
+CACHE_MAP="$CACHE_DIR/chip_cache_map.txt"
+> "$CACHE_MAP"
+
+TOTAL_TO_CACHE=$(wc -l < "$TEMP_DIR/all_available_chips.txt")
+CACHED=0
+CREATED=0
+COUNT=0
+
+echo "Caching annotated images for all $TOTAL_TO_CACHE chips (using numerical index as cache key)..."
+
+while IFS='|' read -r normalized_date username pname thumbnail; do
+    ((COUNT++))
+    
+    # Use numerical index as cache filename (000001.png, 000002.png, etc.)
+    cached_image="$ANNOTATED_DIR/$(printf "%06d.png" $COUNT)"
+    
+    # Store mapping: index|pname -> cached image path (for reference/debugging)
+    echo "$COUNT|$pname|$cached_image" >> "$CACHE_MAP"
+    
+    # Check if cached image exists and is valid
+    if [ -f "$cached_image" ]; then
+        if identify "$cached_image" >/dev/null 2>&1; then
+            ((CACHED++))
+            if [ $((COUNT % 100)) -eq 0 ]; then
+                echo "  Cached $COUNT/$TOTAL_TO_CACHE chips... (cached: $CACHED, created: $CREATED)"
+            fi
+            continue
+        else
+            # Invalid cached file, remove it
+            rm -f "$cached_image"
+        fi
+    fi
+    
+    # Create new annotated image
+    year=$(extract_year "$normalized_date")
+    if [ -z "$year" ] || [ "$year" = "9999" ]; then
+        year="?"
+    fi
+    chip_name=$(extract_chip_name "$pname")
+    
+    overlay_title_block "$thumbnail" "$cached_image" "$year" "$chip_name" "$username"
+    ((CREATED++))
+    
+    if [ $((COUNT % 100)) -eq 0 ]; then
+        echo "  Cached $COUNT/$TOTAL_TO_CACHE chips... (cached: $CACHED, created: $CREATED)"
+    fi
+done < "$TEMP_DIR/all_available_chips.txt"
+
+echo "Cache complete: $CACHED cached, $CREATED newly created (total: $COUNT chips)"
+echo ""
+
+# Step 5.5: Create mapping for selected chips (using numerical index from all_available_chips.txt)
+echo "Creating mapping for selected chips..."
+CHIP_YEAR_MAP="$TEMP_DIR/chip_year_map.txt"
+> "$CHIP_YEAR_MAP"
+
+chip_idx=0
+# SORTED_LIST format: index|normalized_date|username|pname|thumbnail
+while IFS='|' read -r chip_index normalized_date username pname thumbnail; do
+    ((chip_idx++))
+    
+    # Use numerical index directly from SORTED_LIST to get cached image path
+    cached_image="$ANNOTATED_DIR/$(printf "%06d.png" $chip_index)"
+    
+    # Get chip info
+    year=$(extract_year "$normalized_date")
+    if [ -z "$year" ] || [ "$year" = "9999" ]; then
+        year="?"
+    fi
+    chip_name=$(extract_chip_name "$pname")
+    
+    # Store mapping: chip_idx|year|normalized_date|chip_name|username|pname|cached_image_path
+    echo "$chip_idx|$year|$normalized_date|$chip_name|$username|$pname|$cached_image" >> "$CHIP_YEAR_MAP"
+done < "$SORTED_LIST"
+
+echo "Created mapping for $chip_idx selected chips"
+echo ""
+
+# Step 6: Create video segments from beats (one chip per beat)
+echo "Step 6: Creating video segments from beats..."
 SEGMENT_LIST="$TEMP_DIR/segments.txt"
 > "$SEGMENT_LIST"
 
+# Create segments directly from beat intervals
+# Strategy: One chip per beat interval
+# - First chip shown from 0 to first beat
+# - Subsequent chips shown from one beat to the next
+
 SEGMENT_COUNT=0
-while IFS='|' read -r frame_idx duration is_pause; do
-    # Convert frame_idx to integer (bash arithmetic doesn't handle floats)
-    frame_idx_int=$(printf "%.0f" "$frame_idx" 2>/dev/null || echo "$frame_idx" | cut -d'.' -f1)
-    frame_file="$ANNOTATED_DIR/$(printf "%06d.png" $((frame_idx_int + 1)))"
+SEGMENT_DEBUG_LOG="$TEMP_DIR/segment_debug.log"
+> "$SEGMENT_DEBUG_LOG"
+FIRST_SEGMENT_YEAR=""
+LAST_SEGMENT_YEAR=""
+
+# Ensure we have enough chips
+if [ "$TOTAL_SELECTED" -lt 1 ]; then
+    echo "ERROR: No chips were selected! Cannot create video."
+    echo "Check that chips have matching thumbnails in $IMAGE_LIST"
+    exit 1
+fi
+
+if [ "$TOTAL_SELECTED" -lt "$REQUIRED_CHIPS" ]; then
+    echo "WARNING: Only $TOTAL_SELECTED chips available but $REQUIRED_CHIPS needed"
+    echo "Will reuse chips if necessary"
+    REQUIRED_CHIPS="$TOTAL_SELECTED"
+fi
+
+# Ensure SEGMENTS_DIR exists
+mkdir -p "$SEGMENTS_DIR"
+
+# Read beat intervals and create segments
+# Intervals now include frame_count: start_time|end_time|duration|frame_count
+# We use frame_count to create segments with exact frame quantization, preventing error accumulation
+# Use file descriptor to avoid subshell issues
+exec 3< "$BEAT_INTERVALS"
+while IFS='|' read -r start_time end_time duration frame_count <&3; do
+    # Skip empty lines
+    [ -z "$start_time" ] && [ -z "$end_time" ] && continue
+    # If frame_count is missing (old format), calculate it
+    if [ -z "$frame_count" ]; then
+        frame_count=$(echo "scale=0; ($duration * $VIDEO_FPS) / 1" | bc -l 2>/dev/null || echo "1")
+    fi
+    # Calculate which chip to use (chip index starts at 1)
+    chip_num=$((SEGMENT_COUNT + 1))
+    if [ "$TOTAL_SELECTED" -gt 0 ] && [ "$chip_num" -gt "$TOTAL_SELECTED" ]; then
+        # Reuse chips if we run out
+        chip_num=$((((chip_num - 1) % TOTAL_SELECTED) + 1))
+    elif [ "$TOTAL_SELECTED" -eq 0 ]; then
+        echo "ERROR: No chips available for segment $SEGMENT_COUNT" >&2
+        continue
+    fi
+    
+    # Get chip info including cached image path
+    chip_info=$(awk -F'|' -v idx="$chip_num" '$1 == idx {print $0; exit}' "$CHIP_YEAR_MAP")
+    if [ -z "$chip_info" ]; then
+        echo "WARNING: No chip info found for chip_num=$chip_num" >> "$SEGMENT_DEBUG_LOG"
+        continue
+    fi
+    
+    frame_file=$(echo "$chip_info" | cut -d'|' -f7)
+    chip_year=$(echo "$chip_info" | cut -d'|' -f2)
+    chip_name=$(echo "$chip_info" | cut -d'|' -f4)
     
     if [ ! -f "$frame_file" ]; then
+        echo "WARNING: Chip $chip_num image not found: $frame_file" >> "$SEGMENT_DEBUG_LOG"
         continue
     fi
     
     segment_file="$SEGMENTS_DIR/segment_$(printf "%06d" $SEGMENT_COUNT).mp4"
     
-    # Create segment: single frame displayed for 'duration' seconds
-    # Note: MP4 has fixed frame rate, but we simulate variable rate by varying frame duration
-    # Each segment shows one frame for 'duration' seconds at the specified frame rate
+    # Use frame_count for exact frame quantization (prevents accumulated errors)
+    # Calculate duration from frame_count to ensure exact frame alignment
+    actual_duration=$(echo "scale=6; $frame_count / $VIDEO_FPS" | bc -l 2>/dev/null)
+    # Ensure minimum is at least one frame
+    if [ "$frame_count" -lt 1 ]; then
+        frame_count=1
+        actual_duration=$(echo "scale=6; 1 / $VIDEO_FPS" | bc -l 2>/dev/null || echo "0.016667")
+    fi
+    
+    # Ensure duration has leading zero if needed (ffmpeg requires 0.123 not .123)
+    if [[ "$actual_duration" =~ ^\..* ]]; then
+        actual_duration="0$actual_duration"
+    fi
+    
+    # Create segment with exact frame count using -frames:v instead of -t
+    # This ensures perfect frame quantization without accumulation errors
     ffmpeg -y -loop 1 -i "$frame_file" \
-        -t "$duration" \
+        -frames:v "$frame_count" \
         -vf "scale=iw:ih:flags=lanczos" \
         -r "$VIDEO_FPS" \
         -c:v libx264 \
+        -threads 0 \
         -crf "$CRF" \
         -pix_fmt yuv420p \
         -an \
         "$segment_file" \
-        -loglevel error
+        -loglevel error 2>"$TEMP_DIR/ffmpeg_error_${SEGMENT_COUNT}.txt"
     
-    if [ -f "$segment_file" ] && [ -s "$segment_file" ]; then
-        echo "file '$segment_file'" >> "$SEGMENT_LIST"
-        ((SEGMENT_COUNT++))
+    # Check if segment was created successfully
+    if [ ! -f "$segment_file" ] || [ ! -s "$segment_file" ]; then
+        if [ "$SEGMENT_COUNT" -lt 5 ]; then
+            echo "WARNING: Failed to create segment $SEGMENT_COUNT (chip $chip_num, duration=$actual_duration)" >&2
+            echo "  Frame file: $frame_file" >&2
+            echo "  Segment file: $segment_file" >&2
+            if [ -f "$TEMP_DIR/ffmpeg_error_${SEGMENT_COUNT}.txt" ]; then
+                echo "  FFmpeg error:" >&2
+                cat "$TEMP_DIR/ffmpeg_error_${SEGMENT_COUNT}.txt" >&2
+            fi
+        fi
+        continue
     fi
-done < "$TIMING_MAP"
+    
+    # Segment created successfully - add to list
+    echo "file '$segment_file'" >> "$SEGMENT_LIST"
+    echo "$SEGMENT_COUNT|$chip_num|$chip_year|$start_time|$end_time|$actual_duration|$frame_count" >> "$SEGMENT_DEBUG_LOG"
+    
+    if [ -z "$FIRST_SEGMENT_YEAR" ]; then
+        FIRST_SEGMENT_YEAR="$chip_year"
+    fi
+    LAST_SEGMENT_YEAR="$chip_year"
+    
+    # Log first 10 and every 50th segments
+    if [ "$SEGMENT_COUNT" -lt 10 ] || [ $((SEGMENT_COUNT % 50)) -eq 0 ]; then
+        start_formatted=$(printf "%.3f" "$start_time" 2>/dev/null || echo "$start_time")
+        end_formatted=$(printf "%.3f" "$end_time" 2>/dev/null || echo "$end_time")
+        duration_formatted=$(printf "%.3f" "$actual_duration" 2>/dev/null || echo "$actual_duration")
+        echo "  Segment $SEGMENT_COUNT: chip $chip_num (${chip_name}, year: $chip_year), ${start_formatted}s-${end_formatted}s (${frame_count} frames, ${duration_formatted}s)"
+    fi
+    
+    ((SEGMENT_COUNT++))
+done
+exec 3<&-
 
-echo "Created $SEGMENT_COUNT video segments"
+echo ""
+echo "Created $SEGMENT_COUNT video segments from beat intervals"
+echo "DEBUG: Segment summary:"
+echo "  First segment year: $FIRST_SEGMENT_YEAR"
+echo "  Last segment year: $LAST_SEGMENT_YEAR"
+echo "  Total segments: $SEGMENT_COUNT"
 echo ""
 
-# Step 6: Concatenate segments
-echo "Step 6: Concatenating video segments..."
+# Step 7: Concatenate segments
+echo "Step 7: Concatenating video segments..."
 VIDEO_NO_AUDIO="$TEMP_DIR/video_no_audio.mp4"
 
 ffmpeg -y -f concat -safe 0 -i "$SEGMENT_LIST" \
@@ -547,17 +946,18 @@ fi
 echo "Video segments concatenated"
 echo ""
 
-# Step 7: Add audio with fade out
-echo "Step 7: Adding audio with fade out..."
+# Step 8: Add audio with fade out
+echo "Step 8: Adding audio with fade out..."
 FADE_START=$(echo "$VIDEO_DURATION - 1.0" | bc -l)
 
 ffmpeg -y -i "$VIDEO_NO_AUDIO" -i "$EXTRACTED_AUDIO" \
     -af "afade=t=out:st=${FADE_START}:d=1.0" \
     -c:v copy \
     -c:a aac \
+    -threads 0 \
     -b:a 192k \
-    -shortest \
     -movflags +faststart \
+    -fflags +genpts \
     "$OUTPUT_FILE" \
     -loglevel warning
 
@@ -582,6 +982,18 @@ if [ -f "$OUTPUT_FILE" ] && [ -s "$OUTPUT_FILE" ]; then
         echo ""
         echo "Output file (absolute path):"
         echo "$OUTPUT_ABS"
+        
+        # Save timing data for visualization (before cleanup)
+        TIMING_DATA="${OUTPUT_FILE%.mp4}_timing_data.txt"
+        if [ -f "$SEGMENT_DEBUG_LOG" ] && [ -f "$BEATS_FILE" ]; then
+            echo "# Timing data for visualization" > "$TIMING_DATA"
+            echo "# Format: segment_index|chip_num|chip_year|start_time|end_time|duration|frame_count" >> "$TIMING_DATA"
+            cat "$SEGMENT_DEBUG_LOG" >> "$TIMING_DATA"
+            echo "" >> "$TIMING_DATA"
+            echo "# Beat times" >> "$TIMING_DATA"
+            cat "$BEATS_FILE" >> "$TIMING_DATA"
+            echo "Timing data saved to: $TIMING_DATA"
+        fi
     else
         echo ""
         echo "Error: Output file exists but is not a valid MP4"
@@ -593,4 +1005,3 @@ elif [ "$INTERRUPTED" = false ]; then
     echo "Error: Failed to create video file"
     exit 1
 fi
-
