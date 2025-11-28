@@ -3,12 +3,42 @@
 # Script to create MP4 movie from chip layout thumbnails synchronized to dub music beats
 # Chips change exactly at each beat, synchronized with audio
 # Audio fades out over 1 second at the end
-#
-# Usage: ./create_dub_chip_movie.sh [output_file] [audio_segment_start] [duration]
-# Examples:
-#   ./create_dub_chip_movie.sh dub_chips.mp4
-#   ./create_dub_chip_movie.sh dub_chips.mp4 0 45  # Start at 0s, 45s duration
-#   FILE_LIMIT=100 ./create_dub_chip_movie.sh test.mp4  # Test with 100 images
+
+# Show help if requested
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    cat << 'EOF'
+Usage: ./create_dub_chip_movie.sh [output_file] [audio_segment_start] [duration]
+       ./create_dub_chip_movie.sh --help
+
+Arguments:
+  output_file          Output MP4 filename (default: $HOME/pcmp_home/pcmp_chips_dub.mp4)
+                       If no extension is provided, .mp4 will be appended automatically
+  audio_segment_start  Start time in audio file in seconds (default: 0)
+  duration            Video duration in seconds (default: 0 = use all available chips or full audio)
+
+Examples:
+  ./create_dub_chip_movie.sh dub_chips.mp4
+  ./create_dub_chip_movie.sh dub_chips 0 45
+  ./create_dub_chip_movie.sh output 0 30
+
+Environment Variables:
+  CHIP_DIR            Directory containing chip data (default: $HOME/pcmp_home)
+  CSV_DATABASE       Path to chip database CSV file (default: $CHIP_DIR/chip_database.csv)
+  IMAGE_LIST          Path to layout images list file (default: $CHIP_DIR/layout_images.txt)
+  AUDIO_FILE          Path to audio file for synchronization (default: $CHIP_DIR/04 Reaching Dub.m4a)
+  OUTPUT_FILE         Output MP4 filename (overrides first argument if set)
+  VIDEO_FPS           Video frame rate in fps (default: 60)
+  CRF                 Compression quality 0-51, lower is better quality (default: 23)
+  FILE_LIMIT          Limit number of files to process, 0 = unlimited (default: 0)
+  BEAT_THRESHOLD      Beat detection sensitivity 0.0-1.0, lower = more sensitive (default: 0.6)
+
+Examples with environment variables:
+  FILE_LIMIT=100 ./create_dub_chip_movie.sh test.mp4  # Test with 100 images
+  BEAT_THRESHOLD=0.4 ./create_dub_chip_movie.sh output.mp4 0 30  # More sensitive beat detection
+  CRF=18 ./create_dub_chip_movie.sh high_quality.mp4  # Higher quality output
+EOF
+    exit 0
+fi
 
 CHIP_DIR="${CHIP_DIR:-$HOME/pcmp_home}"
 CSV_DATABASE="${CSV_DATABASE:-$CHIP_DIR/chip_database.csv}"
@@ -17,6 +47,11 @@ AUDIO_FILE="${AUDIO_FILE:-$CHIP_DIR/04 Reaching Dub.m4a}"
 OUTPUT_FILE="${1:-${OUTPUT_FILE:-$HOME/pcmp_home/pcmp_chips_dub.mp4}}"
 AUDIO_START="${2:-0}"  # Start time in audio (seconds)
 VIDEO_DURATION="${3:-0}"  # Target video duration (seconds)
+
+# Ensure OUTPUT_FILE has .mp4 extension if no extension is provided
+if [[ ! "$OUTPUT_FILE" =~ \.[^/]+$ ]]; then
+    OUTPUT_FILE="${OUTPUT_FILE}.mp4"
+fi
 VIDEO_FPS="${VIDEO_FPS:-60}"  # Video frame rate (fps) - MP4 container frame rate
 CRF="${CRF:-23}" # Compression quality (0-51, 0 is best quality)
 FILE_LIMIT="${FILE_LIMIT:-0}"  # 0 = no limit, otherwise stop after N files
