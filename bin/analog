@@ -2,9 +2,383 @@
 # Wrapper script for analog that sets the LOGLIB environment variable
 # and launches the log program in analog mode (not diglog mode)
 # This ensures the program can find its configuration files and loads analog.cnf
+#
+# Update Check Feature (v6.4+):
+# - Automatically checks for updates once per 24 hours (release tarballs only)
+# - Git repositories skip update checks (developers should use git pull)
+# - For release tarball users: Enable auto-update by adding to ~/.chipmunk: auto_update=1
+# - This will download and install the appropriate platform-specific release tarball
+# - Warns about local modifications that would be overwritten
+# - Can be disabled with --no-update-check flag
+#
 CHIPMUNK_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export LOGLIB="${CHIPMUNK_DIR}/log/lib"
 export CHIPMUNK_MODE=analog
+
+# Helper functions for ~/.chipmunk config file
+# Get a config value from ~/.chipmunk
+get_chipmunk_config() {
+    local key="$1"
+    local default="$2"
+    local config_file="${HOME}/.chipmunk"
+    
+    if [ -f "${config_file}" ]; then
+        local value=$(grep "^${key}=" "${config_file}" 2>/dev/null | cut -d'=' -f2- | head -1 | tr -d '[:space:]')
+        if [ -n "${value}" ]; then
+            echo "${value}"
+            return 0
+        fi
+    fi
+    echo "${default}"
+}
+
+# Update a config value in ~/.chipmunk (preserving other settings)
+update_chipmunk_config() {
+    local key="$1"
+    local value="$2"
+    local config_file="${HOME}/.chipmunk"
+    local temp_file="${config_file}.tmp"
+    local found=0
+    
+    # Create temp file
+    if [ -f "${config_file}" ]; then
+        # Copy existing file, updating the key if it exists
+        while IFS= read -r line || [ -n "$line" ]; do
+            # Skip comments and empty lines
+            if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "${line// }" ]]; then
+                echo "$line" >> "${temp_file}"
+            elif [[ "$line" =~ ^${key}= ]]; then
+                echo "${key}=${value}" >> "${temp_file}"
+                found=1
+            else
+                echo "$line" >> "${temp_file}"
+            fi
+        done < "${config_file}"
+    fi
+    
+    # Add key if it wasn't found
+    if [ $found -eq 0 ]; then
+        # Add header if file doesn't exist
+        if [ ! -f "${config_file}" ]; then
+            echo "# Chipmunk preferences file" >> "${temp_file}"
+            echo "# Automatically generated - do not edit manually" >> "${temp_file}"
+            echo "" >> "${temp_file}"
+        fi
+        echo "${key}=${value}" >> "${temp_file}"
+    fi
+    
+    # Replace original file
+    if [ -f "${temp_file}" ]; then
+        mv "${temp_file}" "${config_file}" 2>/dev/null || true
+    fi
+}
+
+# Update check function
+check_for_updates() {
+    # Skip update check if --no-update-check is specified
+    for arg in "$@"; do
+        if [ "$arg" = "--no-update-check" ]; then
+            return 0
+        fi
+    done
+
+    # Skip update check if this is a git repository (developers should use git)
+    if [ -d "${CHIPMUNK_DIR}/.git" ]; then
+        return 0
+    fi
+
+    # Check if update check should be skipped (rate limiting: check once per day)
+    CHIPMUNK_CONFIG="${HOME}/.chipmunk"
+    CURRENT_TIME=$(date +%s)
+    
+    # Read last update check time from ~/.chipmunk config file
+    if [ -f "${CHIPMUNK_CONFIG}" ]; then
+        LAST_CHECK=$(grep "^last_update_check=" "${CHIPMUNK_CONFIG}" 2>/dev/null | cut -d'=' -f2 | tr -d '[:space:]' || echo "0")
+        # Check if less than 24 hours (86400 seconds) have passed
+        if [ -n "${LAST_CHECK}" ] && [ "${LAST_CHECK}" != "0" ] && [ $((CURRENT_TIME - LAST_CHECK)) -lt 86400 ]; then
+            return 0  # Skip check, too soon
+        fi
+    fi
+
+    # Update the last check time in ~/.chipmunk (preserving other settings)
+    update_chipmunk_config "last_update_check" "${CURRENT_TIME}"
+
+    # Get current version
+    if [ ! -f "${CHIPMUNK_DIR}/VERSION" ]; then
+        return 0  # Can't check without version file
+    fi
+    CURRENT_VERSION=$(cat "${CHIPMUNK_DIR}/VERSION" | tr -d '[:space:]')
+
+    # Check for required tools
+    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+        return 0  # No network tools available, skip check
+    fi
+
+    # Fetch latest release version from GitHub API
+    LATEST_VERSION=""
+    if command -v curl >/dev/null 2>&1; then
+        LATEST_VERSION=$(curl -s --max-time 5 --connect-timeout 2 \
+            "http://localhost:8888/repos/sensorsINI/chipmunk/releases/latest" \
+            2>/dev/null | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4 | sed 's/^v//' || echo "")
+    elif command -v wget >/dev/null 2>&1; then
+        LATEST_VERSION=$(wget -q --timeout=5 --tries=1 -O - \
+            "http://localhost:8888/repos/sensorsINI/chipmunk/releases/latest" \
+            2>/dev/null | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4 | sed 's/^v//' || echo "")
+    fi
+
+    # If we couldn't fetch version, silently continue
+    if [ -z "${LATEST_VERSION}" ]; then
+        return 0
+    fi
+
+    # Compare versions (simple string comparison works for semantic versioning)
+    if [ "${CURRENT_VERSION}" != "${LATEST_VERSION}" ]; then
+        # Store update message in a file so main script can display it later
+        UPDATE_MSG_FILE="${CHIPMUNK_DIR}/.update_message"
+        {
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Update available!"
+            echo "  Current version: ${CURRENT_VERSION}"
+            echo "  Latest version:  ${LATEST_VERSION}"
+            echo ""
+            echo "  To update manually, download from:"
+            echo "    https://github.com/sensorsINI/chipmunk/releases/latest"
+            echo ""
+            echo "  Or enable auto-update by adding to ~/.chipmunk:"
+            echo "    auto_update=1"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+        } > "${UPDATE_MSG_FILE}" 2>/dev/null || true
+
+        # Check if auto-update is enabled
+        AUTO_UPDATE_ENABLED=$(get_chipmunk_config "auto_update" "0")
+        if [ "${AUTO_UPDATE_ENABLED}" = "1" ]; then
+            echo "Auto-update enabled. Checking for platform-specific release..." > "${UPDATE_MSG_FILE}" 2>/dev/null || true
+            perform_tarball_update "${LATEST_VERSION}" "$@"
+        fi
+    fi
+}
+
+# Detect platform for tarball download
+detect_platform() {
+    local os=""
+    local arch=""
+    
+    # Detect OS
+    case "$(uname -s)" in
+        Linux*)
+            os="linux"
+            ;;
+        Darwin*)
+            os="macos"
+            ;;
+        *)
+            echo "unknown"
+            return 1
+            ;;
+    esac
+    
+    # Detect architecture
+    case "$(uname -m)" in
+        arm64|aarch64)
+            if [ "${os}" = "macos" ]; then
+                arch="arm64"
+            else
+                # Linux ARM64 - not currently supported in releases
+                echo "unknown"
+                return 1
+            fi
+            ;;
+        x86_64|amd64)
+            if [ "${os}" = "macos" ]; then
+                # On macOS, x86_64 could be Intel or Rosetta on Apple Silicon
+                # Check processor brand to distinguish
+                local cpu_brand=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "")
+                if echo "${cpu_brand}" | grep -qi "Apple\|M1\|M2\|M3"; then
+                    # Running under Rosetta on Apple Silicon - should use arm64
+                    arch="arm64"
+                else
+                    arch="intel"
+                fi
+            else
+                arch="x86_64"
+            fi
+            ;;
+        *)
+            echo "unknown"
+            return 1
+            ;;
+    esac
+    
+    echo "${os}-${arch}"
+}
+
+
+# Tarball-based auto-update function
+perform_tarball_update() {
+    local LATEST_VERSION="$1"
+    shift  # Remove first argument, keep rest for re-execution
+    
+    # Detect platform
+    local platform=$(detect_platform)
+    if [ "${platform}" = "unknown" ]; then
+        echo "  Auto-update skipped: Platform not supported for automatic updates"
+        echo "  Please download manually from: https://github.com/sensorsINI/chipmunk/releases/latest"
+        return 1
+    fi
+    
+    # Construct tarball name and URL
+    local tarball_name="chipmunk-${platform}.tar.gz"
+    local tarball_url="https://github.com/sensorsINI/chipmunk/releases/download/v${LATEST_VERSION}/${tarball_name}"
+    local download_dir=$(mktemp -d)
+    local tarball_path="${download_dir}/${tarball_name}"
+    
+    echo "  Platform detected: ${platform}"
+    echo "  Downloading ${tarball_name}..."
+    
+    # Download tarball
+    if command -v curl >/dev/null 2>&1; then
+        if ! curl -sL --max-time 30 --connect-timeout 10 -o "${tarball_path}" "${tarball_url}"; then
+            echo "  Download failed. Please update manually."
+            rm -rf "${download_dir}"
+            return 1
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if ! wget -q --timeout=30 --tries=2 -O "${tarball_path}" "${tarball_url}"; then
+            echo "  Download failed. Please update manually."
+            rm -rf "${download_dir}"
+            return 1
+        fi
+    else
+        echo "  Auto-update skipped: curl or wget required for downloads"
+        rm -rf "${download_dir}"
+        return 1
+    fi
+    
+    # Verify download
+    if [ ! -f "${tarball_path}" ] || [ ! -s "${tarball_path}" ]; then
+        echo "  Download failed: File not found or empty"
+        rm -rf "${download_dir}"
+        return 1
+    fi
+    
+    echo "  Download complete."
+    echo "  Extracting update..."
+    
+    # Extract tarball to a temporary location first to check structure and modifications
+    local extract_temp=$(mktemp -d)
+    if ! tar -xzf "${tarball_path}" -C "${extract_temp}"; then
+        echo "  Extraction failed. Please update manually."
+        rm -rf "${download_dir}" "${extract_temp}"
+        return 1
+    fi
+    
+    # Find the extracted directory (could be chipmunk-<version> or chipmunk-<platform>)
+    local extracted_dir=""
+    for dir in "${extract_temp}"/*; do
+        if [ -d "${dir}" ]; then
+            extracted_dir="${dir}"
+            break
+        fi
+    done
+    
+    if [ -z "${extracted_dir}" ] || [ ! -d "${extracted_dir}" ]; then
+        echo "  Error: Could not find extracted directory in tarball"
+        rm -rf "${download_dir}" "${extract_temp}"
+        return 1
+    fi
+    
+    echo "  Checking for local modifications..."
+    
+    # Check for local modifications in common user-modifiable locations
+    local modified_files=()
+    
+    # Check lessons files
+    if [ -d "${extracted_dir}/lessons" ] && [ -d "${CHIPMUNK_DIR}/lessons" ]; then
+        for lgf_file in "${extracted_dir}"/lessons/*.lgf; do
+            [ ! -f "${lgf_file}" ] && continue
+            local basename_file=$(basename "${lgf_file}")
+            local local_file="${CHIPMUNK_DIR}/lessons/${basename_file}"
+            
+            if [ -f "${local_file}" ]; then
+                if ! cmp -s "${lgf_file}" "${local_file}" 2>/dev/null; then
+                    modified_files+=("lessons/${basename_file}")
+                fi
+            fi
+        done
+    fi
+    
+    # Check config files
+    if [ -d "${extracted_dir}/log/lib" ] && [ -d "${CHIPMUNK_DIR}/log/lib" ]; then
+        for cnf_file in "${extracted_dir}"/log/lib/*.cnf; do
+            [ ! -f "${cnf_file}" ] && continue
+            local basename_file=$(basename "${cnf_file}")
+            local local_file="${CHIPMUNK_DIR}/log/lib/${basename_file}"
+            
+            if [ -f "${local_file}" ]; then
+                if ! cmp -s "${cnf_file}" "${local_file}" 2>/dev/null; then
+                    modified_files+=("log/lib/${basename_file}")
+                fi
+            fi
+        done
+    fi
+    
+    # Warn about modifications
+    if [ ${#modified_files[@]} -gt 0 ]; then
+        echo ""
+        echo "  ⚠️  WARNING: The following locally modified files will be overwritten:"
+        for file in "${modified_files[@]}"; do
+            echo "     - ${file}"
+        done
+        echo ""
+        echo "  Consider backing up these files before continuing."
+        echo "  Proceeding with update..."
+        echo ""
+    else
+        echo "  No local modifications detected in common files."
+    fi
+    
+    echo "  Installing files..."
+    
+    # Copy files from extracted directory to current installation
+    # Use rsync if available for better control, otherwise cp
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a "${extracted_dir}/" "${CHIPMUNK_DIR}/" --exclude='.git' 2>/dev/null || {
+            echo "  Installation failed. Please update manually."
+            rm -rf "${download_dir}" "${extract_temp}"
+            return 1
+        }
+    else
+        # Use find + cp to preserve directory structure
+        (cd "${extracted_dir}" && find . -type f -print0 | xargs -0 -I {} cp --parents {} "${CHIPMUNK_DIR}/" 2>/dev/null) || {
+            # Fallback to simple cp
+            cp -r "${extracted_dir}"/* "${CHIPMUNK_DIR}/" 2>/dev/null || {
+                echo "  Installation failed. Please update manually."
+                rm -rf "${download_dir}" "${extract_temp}"
+                return 1
+            }
+        }
+    fi
+    
+    # Clean up
+    rm -rf "${extract_temp}"
+    
+    # Clean up
+    rm -rf "${download_dir}"
+    
+    echo "  Update complete! Restarting..."
+    echo ""
+    
+    # Re-execute the script with the same arguments (except --no-update-check)
+    NEW_ARGS=()
+    for arg in "$@"; do
+        if [ "$arg" != "--no-update-check" ]; then
+            NEW_ARGS+=("$arg")
+        fi
+    done
+    exec "$0" "${NEW_ARGS[@]}"
+}
 
 # Handle help option (only --help, not -h, so -h can be used for home directory)
 if [ "$1" = "--help" ]; then
@@ -14,15 +388,24 @@ if [ "$1" = "--help" ]; then
     echo "  ./bin/analog [options] [circuit_file.lgf]"
     echo ""
     echo "Options:"
-    echo "  --help        Show this help message"
-    echo "  -h <dir>      Specify home directory for searching gate files, config files, etc."
-    echo "  -c <file>     Specify configuration file (default: analog.cnf)"
-    echo "  -v            Vanilla LOG mode (no CNF file)"
-    echo "  -x <display>  Specify X display name (e.g., :0.0 or hostname:0)"
-    echo "  -z [<file>]   Enable trace mode (debugging). If file specified, output goes there"
-    echo "  -d <file>     Specify dump file for debug output"
-    echo "  -t <file>     Specify trace file for trace output (alternative to -z)"
-    echo "  -r <tool>     Run a specific tool immediately on startup (non-interactive)"
+    echo "  --help            Show this help message"
+    echo "  --no-update-check Skip update check for this run"
+    echo "  -h <dir>          Specify home directory for searching gate files, config files, etc."
+    echo "  -c <file>         Specify configuration file (default: analog.cnf)"
+    echo "  -v                Vanilla LOG mode (no CNF file)"
+    echo "  -x <display>      Specify X display name (e.g., :0.0 or hostname:0)"
+    echo "  -z [<file>]       Enable trace mode (debugging). If file specified, output goes there"
+    echo "  -d <file>         Specify dump file for debug output"
+    echo "  -t <file>         Specify trace file for trace output (alternative to -z)"
+    echo "  -r <tool>         Run a specific tool immediately on startup (non-interactive)"
+    echo ""
+    echo "Update Check:"
+    echo "  The script automatically checks for updates once per day (release tarballs only)."
+    echo "  Git repositories skip update checks (developers should use git pull)."
+    echo "  For release tarball users: Enable auto-update by adding to ~/.chipmunk:"
+    echo "    auto_update=1"
+    echo "  This will download and install the appropriate platform-specific release."
+    echo "  To disable update checks, use: --no-update-check"
     echo ""
     echo "Note: The LOGLIB environment variable can also be used to specify the library"
     echo "      directory for configuration files and gate libraries."
@@ -36,8 +419,36 @@ if [ "$1" = "--help" ]; then
     echo "  ./bin/analog -h ~/my_log_lib           # Use custom home directory"
     echo ""
     echo "For more information, see: https://github.com/sensorsINI/chipmunk/blob/main/HELP.md"
+    
+    # Perform update check and display message after help
+    check_for_updates "$@"
+    
+    # Display update message if available
+    if [ -f "${CHIPMUNK_DIR}/.update_message" ]; then
+        cat "${CHIPMUNK_DIR}/.update_message" 2>/dev/null || true
+        rm -f "${CHIPMUNK_DIR}/.update_message" 2>/dev/null || true
+    fi
+    
     exit 0
 fi
+
+# Perform update check (with timeout to avoid blocking too long)
+# Run in background and wait for it to complete (with timeout)
+check_for_updates "$@" &
+UPDATE_CHECK_PID=$!
+# Wait for update check to complete (max 2 seconds to avoid blocking startup)
+wait_timeout=20  # 20 * 0.1 = 2 seconds
+elapsed=0
+while kill -0 "${UPDATE_CHECK_PID}" 2>/dev/null && [ $elapsed -lt $wait_timeout ]; do
+    sleep 0.1
+    elapsed=$((elapsed + 1))
+done
+# Kill if still running after timeout
+kill "${UPDATE_CHECK_PID}" 2>/dev/null || true
+wait "${UPDATE_CHECK_PID}" 2>/dev/null || true
+
+# Small delay to ensure message file is written
+sleep 0.2
 
 # Save the launch directory for relative path resolution in :load commands
 # This allows users to load files relative to where they launched analog
@@ -68,6 +479,12 @@ for arg in "$@"; do
         ARGS+=("$arg")
     fi
 done
+
+# Display update message if available (before launching program)
+if [ -f "${CHIPMUNK_DIR}/.update_message" ]; then
+    cat "${CHIPMUNK_DIR}/.update_message" 2>/dev/null || true
+    rm -f "${CHIPMUNK_DIR}/.update_message" 2>/dev/null || true
+fi
 
 # Change to log/lib directory so relative paths in config files work
 cd "${CHIPMUNK_DIR}/log/lib"
