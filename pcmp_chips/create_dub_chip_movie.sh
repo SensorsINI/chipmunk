@@ -55,7 +55,8 @@ fi
 VIDEO_FPS="${VIDEO_FPS:-60}"  # Video frame rate (fps) - MP4 container frame rate
 CRF="${CRF:-23}" # Compression quality (0-51, 0 is best quality)
 FILE_LIMIT="${FILE_LIMIT:-0}"  # 0 = no limit, otherwise stop after N files
-BEAT_THRESHOLD="${BEAT_THRESHOLD:-0.6}"  # Beat detection threshold for aubioonset (0.0-1.0, lower = more sensitive)
+BEAT_THRESHOLD="${BEAT_THRESHOLD:-0.8}"  # Beat detection threshold for aubioonset (0.0-1.0, lower = more sensitive)
+BEAT_METHOD="${BEAT_METHOD:-complex}"  # Beat detection method for aubioonset (phase, energy, hfc, complex, specdiff, kl, mkl, specflux)
 # Note: No minimum dwell time - chips are shown for the actual beat interval duration
 
 # Check dependencies
@@ -168,6 +169,7 @@ echo "Audio start: ${AUDIO_START}s"
 echo "Video duration: ${VIDEO_DURATION}s"
 echo "Video frame rate: ${VIDEO_FPS} fps (MP4 container rate)"
 echo "Beat detection threshold: ${BEAT_THRESHOLD} (lower = more sensitive, more beats)"
+echo "Beat detection method: ${BEAT_METHOD}"
 echo "Timing: One chip per beat interval (no minimum dwell time)"
 echo "Output file: $OUTPUT_FILE"
 echo "Compression (CRF): $CRF"
@@ -394,8 +396,8 @@ echo "Step 2: Detecting beats in audio segment..."
 echo "  Using threshold: ${BEAT_THRESHOLD} (lower = more sensitive, detects more beats)"
 BEATS_FILE="$TEMP_DIR/beats.txt"
 
-# Run aubioonset and capture both output and errors for debugging
-aubioonset -i "$EXTRACTED_AUDIO" -t "$BEAT_THRESHOLD" > "$BEATS_FILE" 2>"$TEMP_DIR/aubioonset_errors.txt"
+# Beat detection: Run aubioonset and capture both output and errors for debugging
+aubioonset -i "$EXTRACTED_AUDIO" -t "$BEAT_THRESHOLD" -O "$BEAT_METHOD" > "$BEATS_FILE" 2>"$TEMP_DIR/aubioonset_errors.txt"
 
 if [ ! -s "$BEATS_FILE" ]; then
     echo "Warning: No beats detected with threshold ${BEAT_THRESHOLD}, using uniform timing"
@@ -691,9 +693,9 @@ if [ "$USE_ALL_CHIPS" = true ]; then
     echo "Using all $TOTAL_AVAILABLE available chips (VIDEO_DURATION=0 mode)"
     # Add index to all chips: index|normalized_date|username|pname|thumbnail
     awk '{print NR "|" $0}' "$TEMP_DIR/all_available_chips.txt" > "$SORTED_LIST"
-    # Update REQUIRED_CHIPS to match available chips (will reuse if needed)
+    # Update REQUIRED_CHIPS to match available chips (will freeze last chip if needed)
     if [ "$TOTAL_AVAILABLE" -lt "$REQUIRED_CHIPS" ]; then
-        echo "  Note: Have $TOTAL_AVAILABLE chips but $REQUIRED_CHIPS beats - will reuse chips"
+        echo "  Note: Have $TOTAL_AVAILABLE chips but $REQUIRED_CHIPS beats - will freeze last chip image"
     else
         REQUIRED_CHIPS="$TOTAL_AVAILABLE"
     fi
@@ -821,6 +823,161 @@ done < "$SORTED_LIST"
 echo "Created mapping for $chip_idx selected chips"
 echo ""
 
+# Get video dimensions from first chip image (for photo scaling)
+VIDEO_WIDTH=""
+VIDEO_HEIGHT=""
+if [ "$TOTAL_SELECTED" -gt 0 ]; then
+    first_chip_info=$(awk -F'|' -v idx="1" '$1 == idx {print $0; exit}' "$CHIP_YEAR_MAP")
+    if [ -n "$first_chip_info" ]; then
+        first_chip_image=$(echo "$first_chip_info" | cut -d'|' -f7)
+        if [ -f "$first_chip_image" ]; then
+            VIDEO_WIDTH=$(identify -format "%w" "$first_chip_image" 2>/dev/null)
+            VIDEO_HEIGHT=$(identify -format "%h" "$first_chip_image" 2>/dev/null)
+            if [ -n "$VIDEO_WIDTH" ] && [ -n "$VIDEO_HEIGHT" ]; then
+                echo "Video dimensions determined from chip images: ${VIDEO_WIDTH}x${VIDEO_HEIGHT}"
+            fi
+        fi
+    fi
+fi
+if [ -z "$VIDEO_WIDTH" ] || [ -z "$VIDEO_HEIGHT" ]; then
+    echo "Warning: Could not determine video dimensions, using default 1920x1080"
+    VIDEO_WIDTH=1920
+    VIDEO_HEIGHT=1080
+fi
+echo ""
+
+# Function to process photo: check aspect ratio, split if tall, scale to video size
+# Returns: number of segments created, and sets global PHOTO_SEGMENTS array
+process_photo() {
+    local photo_path="$1"
+    local photo_index="$2"
+    local output_dir="$3"
+    
+    if [ ! -f "$photo_path" ]; then
+        echo "0"
+        return
+    fi
+    
+    # Get photo dimensions
+    local photo_width=$(identify -format "%w" "$photo_path" 2>/dev/null)
+    local photo_height=$(identify -format "%h" "$photo_path" 2>/dev/null)
+    
+    if [ -z "$photo_width" ] || [ -z "$photo_height" ] || [ "$photo_width" -eq 0 ] || [ "$photo_height" -eq 0 ]; then
+        echo "0"
+        return
+    fi
+    
+    # Calculate aspect ratio (height/width)
+    local aspect_ratio=$(echo "scale=2; $photo_height / $photo_width" | bc -l 2>/dev/null || echo "1.0")
+    
+    # Determine number of segments based on aspect ratio
+    # Check larger ratios first
+    local num_segments=1
+    if [ "$(echo "$aspect_ratio >= 3.5" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+        # ~4:1 or taller - split into 4 segments
+        num_segments=4
+    elif [ "$(echo "$aspect_ratio >= 2.5" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+        # ~3:1 or taller - split into 3 segments
+        num_segments=3
+    elif [ "$(echo "$aspect_ratio >= 1.8" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+        # ~2:1 or taller - split into 2 segments
+        num_segments=2
+    fi
+    
+    # Create segments
+    local segment_height=$((photo_height / num_segments))
+    local processed_segments=0
+    
+    for ((seg=0; seg<num_segments; seg++)); do
+        local seg_y=$((seg * segment_height))
+        local seg_output="$output_dir/photo_${photo_index}_seg_${seg}.png"
+        
+        if [ $num_segments -eq 1 ]; then
+            # Single segment - just scale entire photo to video dimensions
+            convert "$photo_path" \
+                -resize "${VIDEO_WIDTH}x${VIDEO_HEIGHT}^" \
+                -gravity center \
+                -extent "${VIDEO_WIDTH}x${VIDEO_HEIGHT}" \
+                "$seg_output" 2>/dev/null
+        else
+            # Multiple segments - crop and scale each segment
+            convert "$photo_path" \
+                -crop "${photo_width}x${segment_height}+0+${seg_y}" \
+                -resize "${VIDEO_WIDTH}x${VIDEO_HEIGHT}^" \
+                -gravity center \
+                -extent "${VIDEO_WIDTH}x${VIDEO_HEIGHT}" \
+                "$seg_output" 2>/dev/null
+        fi
+        
+        if [ -f "$seg_output" ] && [ -s "$seg_output" ]; then
+            PHOTO_SEGMENTS[$processed_segments]="$seg_output"
+            ((processed_segments++))
+        fi
+    done
+    
+    # If no segments were created, create at least one (fallback)
+    if [ $processed_segments -eq 0 ]; then
+        local seg_output="$output_dir/photo_${photo_index}_seg_0.png"
+        convert "$photo_path" \
+            -resize "${VIDEO_WIDTH}x${VIDEO_HEIGHT}^" \
+            -gravity center \
+            -extent "${VIDEO_WIDTH}x${VIDEO_HEIGHT}" \
+            "$seg_output" 2>/dev/null
+        if [ -f "$seg_output" ] && [ -s "$seg_output" ]; then
+            processed_segments=1
+        fi
+    fi
+    
+    echo "$processed_segments"
+}
+
+# Step 5.6: Load photos from photos directory as fallback
+echo "Loading photos from photos directory (fallback when chips run out)..."
+PHOTOS_DIR="$CHIP_DIR/photos"
+PHOTOS_LIST="$TEMP_DIR/photos_list.txt"
+PHOTOS_PROCESSED_DIR="$TEMP_DIR/photos_processed"
+mkdir -p "$PHOTOS_PROCESSED_DIR"
+> "$PHOTOS_LIST"
+
+# Track photo segments: photo_index -> number of segments
+declare -A PHOTO_SEGMENT_COUNT
+
+if [ -d "$PHOTOS_DIR" ]; then
+    # Find all image files, sort by name
+    find "$PHOTOS_DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" \) | sort > "$PHOTOS_LIST"
+    TOTAL_PHOTOS=$(wc -l < "$PHOTOS_LIST" 2>/dev/null || echo "0")
+    if [ "$TOTAL_PHOTOS" -gt 0 ]; then
+        echo "Found $TOTAL_PHOTOS photos in $PHOTOS_DIR"
+        echo "Processing photos (checking aspect ratios, splitting tall photos, scaling to ${VIDEO_WIDTH}x${VIDEO_HEIGHT})..."
+        
+        # Process each photo to determine segment count
+        photo_idx=0
+        while IFS= read -r photo_path; do
+            ((photo_idx++))
+            declare -a PHOTO_SEGMENTS
+            seg_count=$(process_photo "$photo_path" "$photo_idx" "$PHOTOS_PROCESSED_DIR")
+            PHOTO_SEGMENT_COUNT[$photo_idx]=$seg_count
+            PHOTO_SEGMENT_CURRENT[$photo_idx]=0
+            
+            if [ "$seg_count" -gt 1 ]; then
+                echo "  Photo $photo_idx: split into $seg_count segments (tall aspect ratio)"
+            fi
+            
+            if [ $((photo_idx % 10)) -eq 0 ]; then
+                echo "  Processed $photo_idx/$TOTAL_PHOTOS photos..."
+            fi
+        done < "$PHOTOS_LIST"
+        
+        echo "Photo processing complete"
+    else
+        echo "No photos found in $PHOTOS_DIR"
+    fi
+else
+    echo "Photos directory not found: $PHOTOS_DIR"
+    TOTAL_PHOTOS=0
+fi
+echo ""
+
 # Step 6: Create video segments from beats (one chip per beat)
 echo "Step 6: Creating video segments from beats..."
 SEGMENT_LIST="$TEMP_DIR/segments.txt"
@@ -846,12 +1003,32 @@ fi
 
 if [ "$TOTAL_SELECTED" -lt "$REQUIRED_CHIPS" ]; then
     echo "WARNING: Only $TOTAL_SELECTED chips available but $REQUIRED_CHIPS needed"
-    echo "Will reuse chips if necessary"
+    if [ "$TOTAL_PHOTOS" -gt 0 ]; then
+        echo "Will use photos from $PHOTOS_DIR when chips run out, then freeze on last photo"
+    else
+        echo "Will freeze last chip image for remaining audio duration"
+    fi
     REQUIRED_CHIPS="$TOTAL_SELECTED"
 fi
 
 # Ensure SEGMENTS_DIR exists
 mkdir -p "$SEGMENTS_DIR"
+
+# Track transition from chips to photos
+TRANSITION_CREATED=false
+LAST_CHIP_IMAGE=""
+LAST_CHIP_YEAR=""
+LAST_CHIP_NAME=""
+
+# Track photo segment accumulation (for minimum 2 beats per photo)
+PHOTO_ACCUMULATING=false
+PHOTO_ACCUM_DURATION=0
+PHOTO_ACCUM_FRAMES=0
+PHOTO_ACCUM_START_TIME=""
+PHOTO_CURRENT_IMAGE=""
+PHOTO_CURRENT_YEAR=""
+PHOTO_CURRENT_NAME=""
+PHOTO_SEGMENT_READY=false
 
 # Read beat intervals and create segments
 # Intervals now include frame_count: start_time|end_time|duration|frame_count
@@ -865,37 +1042,292 @@ while IFS='|' read -r start_time end_time duration frame_count <&3; do
     if [ -z "$frame_count" ]; then
         frame_count=$(echo "scale=0; ($duration * $VIDEO_FPS) / 1" | bc -l 2>/dev/null || echo "1")
     fi
-    # Calculate which chip to use (chip index starts at 1)
-    chip_num=$((SEGMENT_COUNT + 1))
-    if [ "$TOTAL_SELECTED" -gt 0 ] && [ "$chip_num" -gt "$TOTAL_SELECTED" ]; then
-        # Reuse chips if we run out
-        chip_num=$((((chip_num - 1) % TOTAL_SELECTED) + 1))
-    elif [ "$TOTAL_SELECTED" -eq 0 ]; then
-        echo "ERROR: No chips available for segment $SEGMENT_COUNT" >&2
+    # Calculate which image to use
+    # First use chips, then photos, then freeze on last photo
+    # Note: SEGMENT_COUNT includes transition segments, so we need to track original count
+    original_segment_count=$SEGMENT_COUNT
+    if [ "$TRANSITION_CREATED" = true ]; then
+        # Subtract the 2 transition segments (hold + dissolve) from count for chip/photo calculation
+        original_segment_count=$((SEGMENT_COUNT - 2))
+    fi
+    chip_num=$((original_segment_count + 1))
+    using_photo=false
+    frame_file=""
+    chip_year=""
+    chip_name=""
+    
+    if [ "$TOTAL_SELECTED" -gt 0 ] && [ "$chip_num" -le "$TOTAL_SELECTED" ]; then
+        # Use chip image
+        chip_info=$(awk -F'|' -v idx="$chip_num" '$1 == idx {print $0; exit}' "$CHIP_YEAR_MAP")
+        if [ -z "$chip_info" ]; then
+            echo "WARNING: No chip info found for chip_num=$chip_num" >> "$SEGMENT_DEBUG_LOG"
+            continue
+        fi
+        
+        frame_file=$(echo "$chip_info" | cut -d'|' -f7)
+        chip_year=$(echo "$chip_info" | cut -d'|' -f2)
+        chip_name=$(echo "$chip_info" | cut -d'|' -f4)
+        
+        # Save last chip info for transition
+        if [ "$chip_num" -eq "$TOTAL_SELECTED" ]; then
+            LAST_CHIP_IMAGE="$frame_file"
+            LAST_CHIP_YEAR="$chip_year"
+            LAST_CHIP_NAME="$chip_name"
+        fi
+    elif [ "$TOTAL_SELECTED" -gt 0 ] && [ "$TOTAL_PHOTOS" -gt 0 ]; then
+        # Use photo segments
+        using_photo=true
+        
+        # Create transition segments if this is the first photo segment
+        if [ "$TRANSITION_CREATED" = false ] && [ -n "$LAST_CHIP_IMAGE" ] && [ -f "$LAST_CHIP_IMAGE" ]; then
+            echo "Creating transition from last chip to first photo..."
+            
+            # Calculate frames for hold (0.75s) and dissolve (0.5s)
+            hold_frames=$(echo "scale=0; (0.75 * $VIDEO_FPS) / 1" | bc -l 2>/dev/null || echo "45")
+            dissolve_frames=$(echo "scale=0; (0.5 * $VIDEO_FPS) / 1" | bc -l 2>/dev/null || echo "30")
+            
+            # Get first photo segment
+            first_photo_idx=1
+            first_photo_seg=0
+            first_photo_file="$PHOTOS_PROCESSED_DIR/photo_${first_photo_idx}_seg_${first_photo_seg}.png"
+            
+            if [ ! -f "$first_photo_file" ]; then
+                echo "WARNING: First photo segment not found: $first_photo_file" >> "$SEGMENT_DEBUG_LOG"
+            else
+                # Create 0.75s hold segment of last chip
+                hold_segment="$SEGMENTS_DIR/transition_hold_$(printf "%06d" $SEGMENT_COUNT).mp4"
+                hold_duration=$(echo "scale=6; $hold_frames / $VIDEO_FPS" | bc -l 2>/dev/null)
+                if [[ "$hold_duration" =~ ^\..* ]]; then
+                    hold_duration="0$hold_duration"
+                fi
+                
+                ffmpeg -y -loop 1 -i "$LAST_CHIP_IMAGE" \
+                    -frames:v "$hold_frames" \
+                    -vf "scale=iw:ih:flags=lanczos" \
+                    -r "$VIDEO_FPS" \
+                    -c:v libx264 \
+                    -threads 0 \
+                    -crf "$CRF" \
+                    -pix_fmt yuv420p \
+                    -an \
+                    "$hold_segment" \
+                    -loglevel error 2>"$TEMP_DIR/ffmpeg_error_hold.txt"
+                
+                if [ -f "$hold_segment" ] && [ -s "$hold_segment" ]; then
+                    echo "file '$hold_segment'" >> "$SEGMENT_LIST"
+                    echo "$SEGMENT_COUNT|hold|$LAST_CHIP_YEAR|hold|hold|${hold_duration}|$hold_frames" >> "$SEGMENT_DEBUG_LOG"
+                    ((SEGMENT_COUNT++))
+                    echo "  Created hold segment: ${hold_duration}s"
+                fi
+                
+                # Create 0.5s dissolve segment from last chip to first photo
+                dissolve_segment="$SEGMENTS_DIR/transition_dissolve_$(printf "%06d" $SEGMENT_COUNT).mp4"
+                dissolve_duration=$(echo "scale=6; $dissolve_frames / $VIDEO_FPS" | bc -l 2>/dev/null)
+                if [[ "$dissolve_duration" =~ ^\..* ]]; then
+                    dissolve_duration="0$dissolve_duration"
+                fi
+                
+                # Create dissolve using xfade filter
+                # Both inputs need same duration, fade starts at offset
+                ffmpeg -y \
+                    -loop 1 -t "$dissolve_duration" -i "$LAST_CHIP_IMAGE" \
+                    -loop 1 -t "$dissolve_duration" -i "$first_photo_file" \
+                    -filter_complex "[0:v]scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:flags=lanczos,setpts=PTS-STARTPTS[v0];[1:v]scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:flags=lanczos,setpts=PTS-STARTPTS[v1];[v0][v1]xfade=transition=fade:duration=${dissolve_duration}:offset=0[v]" \
+                    -map "[v]" \
+                    -frames:v "$dissolve_frames" \
+                    -r "$VIDEO_FPS" \
+                    -c:v libx264 \
+                    -threads 0 \
+                    -crf "$CRF" \
+                    -pix_fmt yuv420p \
+                    -an \
+                    "$dissolve_segment" \
+                    -loglevel error 2>"$TEMP_DIR/ffmpeg_error_dissolve.txt"
+                
+                if [ -f "$dissolve_segment" ] && [ -s "$dissolve_segment" ]; then
+                    echo "file '$dissolve_segment'" >> "$SEGMENT_LIST"
+                    echo "$SEGMENT_COUNT|dissolve|$LAST_CHIP_YEAR|dissolve|dissolve|${dissolve_duration}|$dissolve_frames" >> "$SEGMENT_DEBUG_LOG"
+                    ((SEGMENT_COUNT++))
+                    echo "  Created dissolve segment: ${dissolve_duration}s"
+                fi
+            fi
+            
+            TRANSITION_CREATED=true
+        fi
+        
+        # For photos, accumulate beat intervals until we have at least 4 beats
+        # Calculate which photo/segment to use (based on accumulated intervals, not current one)
+        segments_after_chips=$((chip_num - TOTAL_SELECTED))
+        
+        # Track which photo and segment we're on (based on accumulated photo segments created, not beat intervals)
+        # We need a separate counter for photo segments (not beat intervals)
+        if [ -z "${PHOTO_SEGMENT_NUM:-}" ]; then
+            PHOTO_SEGMENT_NUM=0
+            # If transition was created, dissolve already showed first photo seg_0, so start from seg_1
+            if [ "$TRANSITION_CREATED" = true ]; then
+                first_photo_seg_count=${PHOTO_SEGMENT_COUNT[1]:-1}
+                if [ "$first_photo_seg_count" -gt 1 ]; then
+                    # Start accumulating for seg_1
+                    PHOTO_CURRENT_IDX=1
+                    PHOTO_CURRENT_SEG=1
+                else
+                    # Move to next photo
+                    PHOTO_CURRENT_IDX=2
+                    PHOTO_CURRENT_SEG=0
+                fi
+            else
+                PHOTO_CURRENT_IDX=1
+                PHOTO_CURRENT_SEG=0
+            fi
+            PHOTO_CURRENT_IMAGE=""
+            PHOTO_CURRENT_NAME=""
+        fi
+        
+        # Initialize accumulation if starting new photo segment
+        if [ "$PHOTO_ACCUMULATING" = false ]; then
+            PHOTO_ACCUMULATING=true
+            PHOTO_ACCUM_DURATION=0
+            PHOTO_ACCUM_FRAMES=0
+            PHOTO_ACCUM_START_TIME="$start_time"
+            PHOTO_ACCUM_BEAT_COUNT=0
+            
+            # Get current photo/segment image
+            if [ $PHOTO_CURRENT_IDX -le "$TOTAL_PHOTOS" ]; then
+                seg_count=${PHOTO_SEGMENT_COUNT[$PHOTO_CURRENT_IDX]:-1}
+                if [ "$seg_count" -gt 0 ] && [ $PHOTO_CURRENT_SEG -lt "$seg_count" ]; then
+                    PHOTO_CURRENT_IMAGE="$PHOTOS_PROCESSED_DIR/photo_${PHOTO_CURRENT_IDX}_seg_${PHOTO_CURRENT_SEG}.png"
+                    original_photo=$(sed -n "${PHOTO_CURRENT_IDX}p" "$PHOTOS_LIST")
+                    PHOTO_CURRENT_NAME=$(basename "$original_photo")
+                    if [ "$seg_count" -gt 1 ]; then
+                        PHOTO_CURRENT_NAME="${PHOTO_CURRENT_NAME} (seg $((PHOTO_CURRENT_SEG + 1))/$seg_count)"
+                    fi
+                else
+                    # Move to next photo
+                    ((PHOTO_CURRENT_IDX++))
+                    PHOTO_CURRENT_SEG=0
+                    if [ $PHOTO_CURRENT_IDX -le "$TOTAL_PHOTOS" ]; then
+                        seg_count=${PHOTO_SEGMENT_COUNT[$PHOTO_CURRENT_IDX]:-1}
+                        if [ "$seg_count" -gt 0 ]; then
+                            PHOTO_CURRENT_IMAGE="$PHOTOS_PROCESSED_DIR/photo_${PHOTO_CURRENT_IDX}_seg_${PHOTO_CURRENT_SEG}.png"
+                            original_photo=$(sed -n "${PHOTO_CURRENT_IDX}p" "$PHOTOS_LIST")
+                            PHOTO_CURRENT_NAME=$(basename "$original_photo")
+                            if [ "$seg_count" -gt 1 ]; then
+                                PHOTO_CURRENT_NAME="${PHOTO_CURRENT_NAME} (seg $((PHOTO_CURRENT_SEG + 1))/$seg_count)"
+                            fi
+                        fi
+                    else
+                        # Exhausted all photos, freeze on last segment of last photo
+                        PHOTO_CURRENT_IDX=$TOTAL_PHOTOS
+                        last_seg_count=${PHOTO_SEGMENT_COUNT[$PHOTO_CURRENT_IDX]:-1}
+                        if [ "$last_seg_count" -gt 0 ]; then
+                            PHOTO_CURRENT_SEG=$((last_seg_count - 1))
+                            PHOTO_CURRENT_IMAGE="$PHOTOS_PROCESSED_DIR/photo_${PHOTO_CURRENT_IDX}_seg_${PHOTO_CURRENT_SEG}.png"
+                            original_photo=$(sed -n "${PHOTO_CURRENT_IDX}p" "$PHOTOS_LIST")
+                            PHOTO_CURRENT_NAME=$(basename "$original_photo")
+                            if [ "$last_seg_count" -gt 1 ]; then
+                                PHOTO_CURRENT_NAME="${PHOTO_CURRENT_NAME} (seg $((PHOTO_CURRENT_SEG + 1))/$last_seg_count)"
+                            fi
+                        fi
+                    fi
+                fi
+            else
+                # Already exhausted, use last photo
+                PHOTO_CURRENT_IDX=$TOTAL_PHOTOS
+                last_seg_count=${PHOTO_SEGMENT_COUNT[$PHOTO_CURRENT_IDX]:-1}
+                if [ "$last_seg_count" -gt 0 ]; then
+                    PHOTO_CURRENT_SEG=$((last_seg_count - 1))
+                    PHOTO_CURRENT_IMAGE="$PHOTOS_PROCESSED_DIR/photo_${PHOTO_CURRENT_IDX}_seg_${PHOTO_CURRENT_SEG}.png"
+                    original_photo=$(sed -n "${PHOTO_CURRENT_IDX}p" "$PHOTOS_LIST")
+                    PHOTO_CURRENT_NAME=$(basename "$original_photo")
+                    if [ "$last_seg_count" -gt 1 ]; then
+                        PHOTO_CURRENT_NAME="${PHOTO_CURRENT_NAME} (seg $((PHOTO_CURRENT_SEG + 1))/$last_seg_count)"
+                    fi
+                fi
+            fi
+        fi
+        
+        # Accumulate this beat interval
+        PHOTO_ACCUM_DURATION=$(echo "scale=6; $PHOTO_ACCUM_DURATION + $duration" | bc -l 2>/dev/null || echo "$PHOTO_ACCUM_DURATION")
+        PHOTO_ACCUM_FRAMES=$((PHOTO_ACCUM_FRAMES + frame_count))
+        PHOTO_ACCUM_BEAT_COUNT=$((PHOTO_ACCUM_BEAT_COUNT + 1))
+        
+        # Check if we have at least 4 beats
+        if [ $PHOTO_ACCUM_BEAT_COUNT -ge 4 ] && [ -n "$PHOTO_CURRENT_IMAGE" ] && [ -f "$PHOTO_CURRENT_IMAGE" ]; then
+            # Create photo segment with accumulated duration
+            PHOTO_SEGMENT_READY=true
+            frame_file="$PHOTO_CURRENT_IMAGE"
+            chip_year="Photo"
+            chip_name="$PHOTO_CURRENT_NAME"
+            actual_duration="$PHOTO_ACCUM_DURATION"
+            frame_count="$PHOTO_ACCUM_FRAMES"
+            
+            # Reset accumulation and move to next photo/segment
+            PHOTO_ACCUMULATING=false
+            PHOTO_SEGMENT_NUM=$((PHOTO_SEGMENT_NUM + 1))
+            
+            # Move to next segment/photo
+            seg_count=${PHOTO_SEGMENT_COUNT[$PHOTO_CURRENT_IDX]:-1}
+            if [ "$seg_count" -gt 0 ] && [ $((PHOTO_CURRENT_SEG + 1)) -lt "$seg_count" ]; then
+                # Next segment of same photo
+                ((PHOTO_CURRENT_SEG++))
+            else
+                # Move to next photo
+                ((PHOTO_CURRENT_IDX++))
+                PHOTO_CURRENT_SEG=0
+                if [ $PHOTO_CURRENT_IDX -gt "$TOTAL_PHOTOS" ]; then
+                    # Freeze on last segment of last photo
+                    PHOTO_CURRENT_IDX=$TOTAL_PHOTOS
+                    last_seg_count=${PHOTO_SEGMENT_COUNT[$PHOTO_CURRENT_IDX]:-1}
+                    if [ "$last_seg_count" -gt 0 ]; then
+                        PHOTO_CURRENT_SEG=$((last_seg_count - 1))
+                    else
+                        PHOTO_CURRENT_SEG=0
+                    fi
+                fi
+            fi
+        else
+            # Not enough beats yet, skip creating segment this iteration
+            continue
+        fi
+    elif [ "$TOTAL_SELECTED" -gt 0 ]; then
+        # No photos available, freeze last chip
+        chip_num="$TOTAL_SELECTED"
+        chip_info=$(awk -F'|' -v idx="$chip_num" '$1 == idx {print $0; exit}' "$CHIP_YEAR_MAP")
+        if [ -z "$chip_info" ]; then
+            echo "WARNING: No chip info found for chip_num=$chip_num" >> "$SEGMENT_DEBUG_LOG"
+            continue
+        fi
+        
+        frame_file=$(echo "$chip_info" | cut -d'|' -f7)
+        chip_year=$(echo "$chip_info" | cut -d'|' -f2)
+        chip_name=$(echo "$chip_info" | cut -d'|' -f4)
+    else
+        echo "ERROR: No chips or photos available for segment $SEGMENT_COUNT" >&2
         continue
     fi
-    
-    # Get chip info including cached image path
-    chip_info=$(awk -F'|' -v idx="$chip_num" '$1 == idx {print $0; exit}' "$CHIP_YEAR_MAP")
-    if [ -z "$chip_info" ]; then
-        echo "WARNING: No chip info found for chip_num=$chip_num" >> "$SEGMENT_DEBUG_LOG"
-        continue
-    fi
-    
-    frame_file=$(echo "$chip_info" | cut -d'|' -f7)
-    chip_year=$(echo "$chip_info" | cut -d'|' -f2)
-    chip_name=$(echo "$chip_info" | cut -d'|' -f4)
     
     if [ ! -f "$frame_file" ]; then
-        echo "WARNING: Chip $chip_num image not found: $frame_file" >> "$SEGMENT_DEBUG_LOG"
+        if [ "$using_photo" = true ]; then
+            echo "WARNING: Photo not found: $frame_file" >> "$SEGMENT_DEBUG_LOG"
+        else
+            echo "WARNING: Chip $chip_num image not found: $frame_file" >> "$SEGMENT_DEBUG_LOG"
+        fi
         continue
     fi
     
     segment_file="$SEGMENTS_DIR/segment_$(printf "%06d" $SEGMENT_COUNT).mp4"
     
     # Use frame_count for exact frame quantization (prevents accumulated errors)
-    # Calculate duration from frame_count to ensure exact frame alignment
-    actual_duration=$(echo "scale=6; $frame_count / $VIDEO_FPS" | bc -l 2>/dev/null)
+    # For photos with accumulated beats, use the accumulated duration; otherwise calculate from frame_count
+    if [ "$using_photo" = true ] && [ "$PHOTO_SEGMENT_READY" = true ]; then
+        # Use accumulated duration for photos (already set above)
+        # Recalculate from frame_count to ensure frame alignment
+        actual_duration=$(echo "scale=6; $frame_count / $VIDEO_FPS" | bc -l 2>/dev/null)
+        PHOTO_SEGMENT_READY=false
+    else
+        # Calculate duration from frame_count to ensure exact frame alignment
+        actual_duration=$(echo "scale=6; $frame_count / $VIDEO_FPS" | bc -l 2>/dev/null)
+    fi
     # Ensure minimum is at least one frame
     if [ "$frame_count" -lt 1 ]; then
         frame_count=1
@@ -924,7 +1356,11 @@ while IFS='|' read -r start_time end_time duration frame_count <&3; do
     # Check if segment was created successfully
     if [ ! -f "$segment_file" ] || [ ! -s "$segment_file" ]; then
         if [ "$SEGMENT_COUNT" -lt 5 ]; then
-            echo "WARNING: Failed to create segment $SEGMENT_COUNT (chip $chip_num, duration=$actual_duration)" >&2
+            if [ "$using_photo" = true ]; then
+                echo "WARNING: Failed to create segment $SEGMENT_COUNT (photo ${chip_name}, duration=$actual_duration)" >&2
+            else
+                echo "WARNING: Failed to create segment $SEGMENT_COUNT (chip $chip_num, duration=$actual_duration)" >&2
+            fi
             echo "  Frame file: $frame_file" >&2
             echo "  Segment file: $segment_file" >&2
             if [ -f "$TEMP_DIR/ffmpeg_error_${SEGMENT_COUNT}.txt" ]; then
@@ -937,7 +1373,11 @@ while IFS='|' read -r start_time end_time duration frame_count <&3; do
     
     # Segment created successfully - add to list
     echo "file '$segment_file'" >> "$SEGMENT_LIST"
-    echo "$SEGMENT_COUNT|$chip_num|$chip_year|$start_time|$end_time|$actual_duration|$frame_count" >> "$SEGMENT_DEBUG_LOG"
+    if [ "$using_photo" = true ]; then
+        echo "$SEGMENT_COUNT|photo|$chip_year|$start_time|$end_time|$actual_duration|$frame_count|$chip_name" >> "$SEGMENT_DEBUG_LOG"
+    else
+        echo "$SEGMENT_COUNT|$chip_num|$chip_year|$start_time|$end_time|$actual_duration|$frame_count" >> "$SEGMENT_DEBUG_LOG"
+    fi
     
     if [ -z "$FIRST_SEGMENT_YEAR" ]; then
         FIRST_SEGMENT_YEAR="$chip_year"
@@ -949,7 +1389,11 @@ while IFS='|' read -r start_time end_time duration frame_count <&3; do
         start_formatted=$(printf "%.3f" "$start_time" 2>/dev/null || echo "$start_time")
         end_formatted=$(printf "%.3f" "$end_time" 2>/dev/null || echo "$end_time")
         duration_formatted=$(printf "%.3f" "$actual_duration" 2>/dev/null || echo "$actual_duration")
-        echo "  Segment $SEGMENT_COUNT: chip $chip_num (${chip_name}, year: $chip_year), ${start_formatted}s-${end_formatted}s (${frame_count} frames, ${duration_formatted}s)"
+        if [ "$using_photo" = true ]; then
+            echo "  Segment $SEGMENT_COUNT: photo ${chip_name}, ${start_formatted}s-${end_formatted}s (${frame_count} frames, ${duration_formatted}s)"
+        else
+            echo "  Segment $SEGMENT_COUNT: chip $chip_num (${chip_name}, year: $chip_year), ${start_formatted}s-${end_formatted}s (${frame_count} frames, ${duration_formatted}s)"
+        fi
     fi
     
     ((SEGMENT_COUNT++))
@@ -981,20 +1425,33 @@ fi
 echo "Video segments concatenated"
 echo ""
 
-# Step 8: Add audio with fade out
-echo "Step 8: Adding audio with fade out..."
-FADE_START=$(echo "$VIDEO_DURATION - 1.0" | bc -l)
-
-ffmpeg -y -i "$VIDEO_NO_AUDIO" -i "$EXTRACTED_AUDIO" \
-    -af "afade=t=out:st=${FADE_START}:d=1.0" \
-    -c:v copy \
-    -c:a aac \
-    -threads 0 \
-    -b:a 192k \
-    -movflags +faststart \
-    -fflags +genpts \
-    "$OUTPUT_FILE" \
-    -loglevel warning
+# Step 8: Add audio with fade out (skip fade if using entire audio)
+if [ "${ORIGINAL_VIDEO_DURATION:-}" = "0" ]; then
+    echo "Step 8: Adding audio (no fade - using entire audio)..."
+    ffmpeg -y -i "$VIDEO_NO_AUDIO" -i "$EXTRACTED_AUDIO" \
+        -c:v copy \
+        -c:a aac \
+        -threads 0 \
+        -b:a 192k \
+        -movflags +faststart \
+        -fflags +genpts \
+        "$OUTPUT_FILE" \
+        -loglevel warning
+else
+    echo "Step 8: Adding audio with fade out..."
+    FADE_START=$(echo "$VIDEO_DURATION - 1.0" | bc -l)
+    
+    ffmpeg -y -i "$VIDEO_NO_AUDIO" -i "$EXTRACTED_AUDIO" \
+        -af "afade=t=out:st=${FADE_START}:d=1.0" \
+        -c:v copy \
+        -c:a aac \
+        -threads 0 \
+        -b:a 192k \
+        -movflags +faststart \
+        -fflags +genpts \
+        "$OUTPUT_FILE" \
+        -loglevel warning
+fi
 
 if [ -f "$OUTPUT_FILE" ] && [ -s "$OUTPUT_FILE" ]; then
     if file "$OUTPUT_FILE" | grep -q "MP4\|ISO Media"; then

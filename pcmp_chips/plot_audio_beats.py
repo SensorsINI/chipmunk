@@ -7,15 +7,17 @@ import sys
 import subprocess
 import tempfile
 import os
+import shutil
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-def extract_beats(audio_file):
+def extract_beats(audio_file, method='energy'):
     """Extract beat times using aubioonset"""
     beats = []
     try:
         result = subprocess.run(
-            ['aubioonset', '-i', audio_file, '-t', '0.3'],
+            ['aubioonset', '-i', audio_file, '-t', '0.3', '-O', method], # extract beats
             capture_output=True,
             text=True,
             check=True
@@ -34,6 +36,13 @@ def extract_beats(audio_file):
 
 def load_audio_envelope(audio_file, duration=10.0):
     """Load audio envelope using ffmpeg and numpy"""
+    # Find ffmpeg executable
+    ffmpeg_path = shutil.which('ffmpeg')
+    if not ffmpeg_path:
+        print("Error: ffmpeg not found in PATH", file=sys.stderr)
+        print("Install with: sudo apt install ffmpeg", file=sys.stderr)
+        sys.exit(1)
+    
     # Create temporary wav file
     with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_wav:
         tmp_wav_path = tmp_wav.name
@@ -41,7 +50,7 @@ def load_audio_envelope(audio_file, duration=10.0):
     try:
         # Convert audio to WAV format with ffmpeg (first 'duration' seconds)
         subprocess.run(
-            ['ffmpeg', '-y', '-i', audio_file, '-t', str(duration),
+            [ffmpeg_path, '-y', '-i', audio_file, '-t', str(duration),
              '-ar', '44100', '-ac', '1', '-f', 'wav', tmp_wav_path],
             capture_output=True,
             check=True
@@ -91,10 +100,10 @@ def load_audio_envelope(audio_file, duration=10.0):
         if os.path.exists(tmp_wav_path):
             os.unlink(tmp_wav_path)
 
-def plot_audio_beats(audio_file, max_duration=10.0):
+def plot_audio_beats(audio_file, max_duration=10.0, method='energy', show=False):
     """Plot audio envelope with beat ticks"""
     print(f"Extracting beats from {audio_file}...")
-    beats = extract_beats(audio_file)
+    beats = extract_beats(audio_file, method)
     
     # Filter beats within duration
     beats_in_range = [b for b in beats if b <= max_duration]
@@ -141,7 +150,7 @@ def plot_audio_beats(audio_file, max_duration=10.0):
     plt.tight_layout()
     
     # Save plot
-    output_file = 'audio_beats_plot.png'
+    output_file = '/tmp/audio_beats_plot.png'
     try:
         plt.savefig(output_file, dpi=150, bbox_inches='tight')
         print(f"Plot saved to {os.path.abspath(output_file)}")
@@ -149,25 +158,68 @@ def plot_audio_beats(audio_file, max_duration=10.0):
         print(f"Error saving plot: {e}", file=sys.stderr)
         sys.exit(1)
     
-    # Try to display if possible (suppress errors)
-    try:
-        plt.show()
-    except Exception:
-        pass  # Display not available, that's fine
+    # Only show window if explicitly requested
+    if show:
+        try:
+            plt.show()
+        except Exception:
+            pass  # Display not available, that's fine
     
-    plt.close()  # Close figure to free memory
+    plt.close()  # Close figure to free memory (prevents window from staying open)
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        audio_file = os.path.expanduser('~/pcmp_home/04 Reaching Dub.m4a')
-    else:
-        audio_file = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        description='Plot audio envelope with beat ticks using aubioonset',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Available onset detection methods:
+  default    - Energy-based method (default)
+  energy     - Uses energy to detect onsets
+  hfc        - High-Frequency Content method
+  complex    - Complex domain method
+  phase      - Phase-based method
+  specdiff   - Spectral difference method
+  kl         - Kullback-Liebler method
+  mkl        - Modified Kullback-Liebler method
+  specflux   - Spectral flux method
+
+Examples:
+  %(prog)s audio.m4a
+  %(prog)s audio.m4a 15.0
+  %(prog)s audio.m4a 10.0 --method hfc
+        """
+    )
+    parser.add_argument(
+        'audio_file',
+        nargs='?',
+        default=os.path.expanduser('~/pcmp_home/04 Reaching Dub.m4a'),
+        help='Path to audio file (default: ~/pcmp_home/04 Reaching Dub.m4a)'
+    )
+    parser.add_argument(
+        'max_duration',
+        type=float,
+        nargs='?',
+        default=10.0,
+        help='Maximum duration in seconds to plot (default: 10.0)'
+    )
+    parser.add_argument(
+        '--method',
+        type=str,
+        default='energy',
+        choices=['default', 'energy', 'hfc', 'complex', 'phase', 'specdiff', 'kl', 'mkl', 'specflux'],
+        help='Onset detection method to use (default: energy)'
+    )
+    parser.add_argument(
+        '--show',
+        action='store_true',
+        help='Display the plot in a window (default: only save to file)'
+    )
     
-    max_duration = float(sys.argv[2]) if len(sys.argv) > 2 else 10.0
+    args = parser.parse_args()
     
-    if not os.path.exists(audio_file):
-        print(f"Error: Audio file not found: {audio_file}", file=sys.stderr)
+    if not os.path.exists(args.audio_file):
+        print(f"Error: Audio file not found: {args.audio_file}", file=sys.stderr)
         sys.exit(1)
     
-    plot_audio_beats(audio_file, max_duration)
+    plot_audio_beats(args.audio_file, args.max_duration, args.method, args.show)
 
