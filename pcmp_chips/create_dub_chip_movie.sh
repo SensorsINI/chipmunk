@@ -51,12 +51,17 @@ Environment Variables:
   FILE_LIMIT          Limit number of files to process, 0 = unlimited (default: 0)
   BEAT_THRESHOLD      Beat detection sensitivity 0.0-1.0, lower = more sensitive (default: 0.6)
                        (ignored in --short mode)
+  TAU                 Temporal filtering time constant in seconds (default: 0.5)
+                       Only applies to --short mode. Higher values = more smoothing.
+                       Set TAU=0 to disable. Example: TAU=0.1 for 100ms smoothing
 
 Examples with environment variables:
   FILE_LIMIT=100 ./create_dub_chip_movie.sh test.mp4  # Test with 100 images
   BEAT_THRESHOLD=0.4 ./create_dub_chip_movie.sh output.mp4 0 30  # More sensitive beat detection
   CRF=18 ./create_dub_chip_movie.sh high_quality.mp4  # Higher quality output
   ./create_dub_chip_movie.sh --short short.mp4  # Short mode: one chip per frame, no audio
+  TAU=0.1 ./create_dub_chip_movie.sh --short smooth.mp4  # Light temporal smoothing (100ms)
+  TAU=0 ./create_dub_chip_movie.sh --short sharp.mp4  # Disable temporal filtering
 EOF
     exit 0
 fi
@@ -78,6 +83,7 @@ CRF="${CRF:-23}" # Compression quality (0-51, 0 is best quality)
 FILE_LIMIT="${FILE_LIMIT:-0}"  # 0 = no limit, otherwise stop after N files
 BEAT_THRESHOLD="${BEAT_THRESHOLD:-0.8}"  # Beat detection threshold for aubioonset (0.0-1.0, lower = more sensitive)
 BEAT_METHOD="${BEAT_METHOD:-complex}"  # Beat detection method for aubioonset (phase, energy, hfc, complex, specdiff, kl, mkl, specflux)
+TAU="${TAU:-0.05}"  # Temporal filtering time constant (seconds), 0 = disabled, default: 0.5s (only applies to --short mode)
 # Note: No minimum dwell time - chips are shown for the actual beat interval duration
 
 # Check dependencies
@@ -191,6 +197,11 @@ if [ "$SHORT_MODE" = true ]; then
     echo "Video frame rate: ${VIDEO_FPS} fps"
     echo "Output file: $OUTPUT_FILE"
     echo "Compression (CRF): $CRF"
+    if [ "$(echo "$TAU > 0" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+        echo "Temporal filtering: TAU=${TAU}s (exponential smoothing enabled)"
+    else
+        echo "Temporal filtering: disabled (TAU=0)"
+    fi
     if [ "$FILE_LIMIT" -gt 0 ]; then
         echo "File limit: $FILE_LIMIT files (test mode)"
     else
@@ -355,6 +366,11 @@ if [ "$SHORT_MODE" = true ]; then
     echo "Timing: One chip image per frame"
     echo "Pause: 0.5s on first and last frame"
     echo "Audio: None"
+    if [ "$(echo "$TAU > 0" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+        echo "Temporal filtering: TAU=${TAU}s (exponential smoothing between frames)"
+    else
+        echo "Temporal filtering: disabled (TAU=0, sharp transitions)"
+    fi
     echo ""
     echo "==========================================="
 else
@@ -433,6 +449,70 @@ echo ""
 # Handle short mode separately
 if [ "$SHORT_MODE" = true ]; then
     # SHORT MODE: One chip per frame, no audio, 0.5s pause on first and last frame
+    
+    # Calculate temporal filtering weights for tmix
+    # For exponential averaging: we approximate IIR with FIR using exponential weights
+    # Calculate alpha = 1 - exp(-dt/tau) where dt = 1/fps
+    # Then create exponential weights for tmix: [w0, w1, w2, ...] where w0 = alpha, w1 = alpha*(1-alpha), etc.
+    calculate_temporal_weights() {
+        local tau="$1"
+        local fps="$2"
+        
+        if [ "$(echo "$tau <= 0" | bc -l 2>/dev/null || echo "1")" = "1" ]; then
+            echo ""  # Disabled
+            return
+        fi
+        
+        local dt=$(echo "scale=10; 1 / $fps" | bc -l)
+        local alpha=$(echo "scale=10; 1 - e(-$dt / $tau)" | bc -l)
+        
+        # Calculate number of frames to include (until weight drops below 1% of first weight)
+        # For exponential: weight[n] = alpha * (1-alpha)^n
+        # We want weight[n] < 0.01 * alpha, so (1-alpha)^n < 0.01
+        # n > log(0.01) / log(1-alpha)
+        local frames_str=$(echo "scale=0; (-l(0.01) / l(1 - $alpha)) + 1" | bc -l 2>/dev/null)
+        local frames=${frames_str:-30}
+        # Convert to integer and limit to reasonable number
+        frames=$(echo "scale=0; $frames / 1" | bc -l 2>/dev/null || echo "30")
+        if [ -z "$frames" ] || [ "$frames" = "" ]; then
+            frames=30
+        fi
+        # Limit to reasonable number
+        if [ "$frames" -gt 60 ] 2>/dev/null; then
+            frames=60
+        fi
+        if [ "$frames" -lt 2 ] 2>/dev/null; then
+            frames=2
+        fi
+        
+        # Generate exponential weights: alpha, alpha*(1-alpha), alpha*(1-alpha)^2, ...
+        local weights=""
+        local weight_sum=0
+        local i=0
+        while [ "$i" -lt "$frames" ]; do
+            local weight=$(echo "scale=10; $alpha * (1 - $alpha)^$i" | bc -l)
+            if [ -z "$weights" ]; then
+                weights="$weight"
+            else
+                weights="$weights $weight"
+            fi
+            weight_sum=$(echo "scale=10; $weight_sum + $weight" | bc -l)
+            i=$((i + 1))
+        done
+        
+        # Normalize weights so they sum to 1
+        local normalized_weights=""
+        for weight in $weights; do
+            local norm_weight=$(echo "scale=10; $weight / $weight_sum" | bc -l)
+            if [ -z "$normalized_weights" ]; then
+                normalized_weights="$norm_weight"
+            else
+                normalized_weights="$normalized_weights $norm_weight"
+            fi
+        done
+        
+        echo "$frames|$normalized_weights"
+    }
     
     # Step 1: Load all chips
     echo "Step 1: Loading all chips..."
@@ -825,6 +905,31 @@ PYTHON_EOF
     fi
     echo ""
     
+    # Calculate temporal filtering weights if TAU > 0
+    TEMPORAL_WEIGHTS=$(calculate_temporal_weights "$TAU" "$VIDEO_FPS")
+    
+    # Build video filter chain
+    VF_CHAIN="scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:flags=lanczos"
+    
+    # Add temporal filtering if enabled (TAU > 0)
+    if [ -n "$TEMPORAL_WEIGHTS" ]; then
+        # Extract frames and weights
+        TMIX_FRAMES=$(echo "$TEMPORAL_WEIGHTS" | cut -d'|' -f1)
+        TMIX_WEIGHTS=$(echo "$TEMPORAL_WEIGHTS" | cut -d'|' -f2)
+        
+        # Use tmix for exponential averaging with calculated weights
+        # tmix mixes successive frames with exponential weights
+        # Note: weights must be space-separated, no quotes in the filter string
+        VF_CHAIN="${VF_CHAIN},tmix=frames=${TMIX_FRAMES}:weights=${TMIX_WEIGHTS}"
+        
+        # Calculate alpha for display
+        local dt=$(echo "scale=10; 1 / $VIDEO_FPS" | bc -l)
+        local alpha=$(echo "scale=10; 1 - e(-$dt / $TAU)" | bc -l)
+        echo "Applying temporal filtering: tau=${TAU}s, alpha=$(printf "%.6f" "$alpha"), frames=${TMIX_FRAMES}"
+    else
+        echo "Temporal filtering disabled (TAU=0)"
+    fi
+    
     # Encode rawvideo to MP4
     # Use -sseof to ensure we read exactly the right amount, or let ffmpeg calculate from file size
     ffmpeg -y -f rawvideo \
@@ -833,6 +938,7 @@ PYTHON_EOF
         -framerate "$VIDEO_FPS" \
         -i "$CONCAT_RAWVIDEO" \
         -frames:v "$TOTAL_FRAMES" \
+        -vf "$VF_CHAIN" \
         -c:v libx264 \
         -preset medium \
         -crf "$CRF" \
