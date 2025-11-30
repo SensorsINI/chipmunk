@@ -2,22 +2,40 @@
 
 # Script to create MP4 movie from chip layout thumbnails synchronized to dub music beats
 # Chips change exactly at each beat, synchronized with audio
-# Audio fades out over 1 second at the end
+# Audio fades out over 1 second at the end. By default includes photos from photos folder,
+# If no audio file is provided, the script will use the default audio file in the chip directory.
+# --short option creates a movie with one chip image per frame, no audio, with 0.5s pause on first and last frame.
+
+# Parse --short option
+SHORT_MODE=false
+ARGS=()
+for arg in "$@"; do
+    if [ "$arg" = "--short" ]; then
+        SHORT_MODE=true
+    else
+        ARGS+=("$arg")
+    fi
+done
 
 # Show help if requested
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+if [ "${ARGS[0]}" = "--help" ] || [ "${ARGS[0]}" = "-h" ]; then
     cat << 'EOF'
-Usage: ./create_dub_chip_movie.sh [output_file] [audio_segment_start] [duration]
+Usage: ./create_dub_chip_movie.sh [--short] [output_file] [audio_segment_start] [duration]
        ./create_dub_chip_movie.sh --help
+
+Options:
+  --short              Create short movie: one chip image per frame, no audio,
+                       with 0.5s pause on first and last frame
 
 Arguments:
   output_file          Output MP4 filename (default: $HOME/pcmp_home/pcmp_chips_dub.mp4)
                        If no extension is provided, .mp4 will be appended automatically
-  audio_segment_start  Start time in audio file in seconds (default: 0)
+  audio_segment_start  Start time in audio file in seconds (default: 0, ignored in --short mode)
   duration            Video duration in seconds (default: 0 = use all available chips or full audio)
 
 Examples:
   ./create_dub_chip_movie.sh dub_chips.mp4
+  ./create_dub_chip_movie.sh --short short_chips.mp4
   ./create_dub_chip_movie.sh dub_chips 0 45
   ./create_dub_chip_movie.sh output 0 30
 
@@ -26,16 +44,19 @@ Environment Variables:
   CSV_DATABASE       Path to chip database CSV file (default: $CHIP_DIR/chip_database.csv)
   IMAGE_LIST          Path to layout images list file (default: $CHIP_DIR/layout_images.txt)
   AUDIO_FILE          Path to audio file for synchronization (default: $CHIP_DIR/04 Reaching Dub.m4a)
+                       (ignored in --short mode)
   OUTPUT_FILE         Output MP4 filename (overrides first argument if set)
   VIDEO_FPS           Video frame rate in fps (default: 60)
   CRF                 Compression quality 0-51, lower is better quality (default: 23)
   FILE_LIMIT          Limit number of files to process, 0 = unlimited (default: 0)
   BEAT_THRESHOLD      Beat detection sensitivity 0.0-1.0, lower = more sensitive (default: 0.6)
+                       (ignored in --short mode)
 
 Examples with environment variables:
   FILE_LIMIT=100 ./create_dub_chip_movie.sh test.mp4  # Test with 100 images
   BEAT_THRESHOLD=0.4 ./create_dub_chip_movie.sh output.mp4 0 30  # More sensitive beat detection
   CRF=18 ./create_dub_chip_movie.sh high_quality.mp4  # Higher quality output
+  ./create_dub_chip_movie.sh --short short.mp4  # Short mode: one chip per frame, no audio
 EOF
     exit 0
 fi
@@ -44,9 +65,9 @@ CHIP_DIR="${CHIP_DIR:-$HOME/pcmp_home}"
 CSV_DATABASE="${CSV_DATABASE:-$CHIP_DIR/chip_database.csv}"
 IMAGE_LIST="${IMAGE_LIST:-$CHIP_DIR/layout_images.txt}"
 AUDIO_FILE="${AUDIO_FILE:-$CHIP_DIR/04 Reaching Dub.m4a}"
-OUTPUT_FILE="${1:-${OUTPUT_FILE:-$HOME/pcmp_home/pcmp_chips_dub.mp4}}"
-AUDIO_START="${2:-0}"  # Start time in audio (seconds)
-VIDEO_DURATION="${3:-0}"  # Target video duration (seconds)
+OUTPUT_FILE="${ARGS[0]:-${OUTPUT_FILE:-$HOME/pcmp_home/pcmp_chips_dub.mp4}}"
+AUDIO_START="${ARGS[1]:-0}"  # Start time in audio (seconds)
+VIDEO_DURATION="${ARGS[2]:-0}"  # Target video duration (seconds)
 
 # Ensure OUTPUT_FILE has .mp4 extension if no extension is provided
 if [[ ! "$OUTPUT_FILE" =~ \.[^/]+$ ]]; then
@@ -91,7 +112,7 @@ if [ ! -f "$IMAGE_LIST" ]; then
     exit 1
 fi
 
-if [ ! -f "$AUDIO_FILE" ]; then
+if [ "$SHORT_MODE" = false ] && [ ! -f "$AUDIO_FILE" ]; then
     echo "Error: Audio file not found: $AUDIO_FILE"
     exit 1
 fi
@@ -160,25 +181,43 @@ elif [ -z "$VIDEO_DURATION" ] || [ "$(echo "$VIDEO_DURATION <= 0" | bc -l 2>/dev
     exit 1
 fi
 
-echo "Creating dub-synchronized chip layout movie"
-echo "==========================================="
-echo "CSV Database: $CSV_DATABASE"
-echo "Image list: $IMAGE_LIST"
-echo "Audio file: $AUDIO_FILE"
-echo "Audio start: ${AUDIO_START}s"
-echo "Video duration: ${VIDEO_DURATION}s"
-echo "Video frame rate: ${VIDEO_FPS} fps (MP4 container rate)"
-echo "Beat detection threshold: ${BEAT_THRESHOLD} (lower = more sensitive, more beats)"
-echo "Beat detection method: ${BEAT_METHOD}"
-echo "Timing: One chip per beat interval (no minimum dwell time)"
-echo "Output file: $OUTPUT_FILE"
-echo "Compression (CRF): $CRF"
-if [ "$FILE_LIMIT" -gt 0 ]; then
-    echo "File limit: $FILE_LIMIT files (test mode)"
+if [ "$SHORT_MODE" = true ]; then
+    echo "Creating short chip layout movie (--short mode)"
+    echo "==========================================="
+    echo "CSV Database: $CSV_DATABASE"
+    echo "Image list: $IMAGE_LIST"
+    echo "Mode: One chip image per frame, no audio"
+    echo "Pause: 0.5s on first and last frame"
+    echo "Video frame rate: ${VIDEO_FPS} fps"
+    echo "Output file: $OUTPUT_FILE"
+    echo "Compression (CRF): $CRF"
+    if [ "$FILE_LIMIT" -gt 0 ]; then
+        echo "File limit: $FILE_LIMIT files (test mode)"
+    else
+        echo "File limit: unlimited"
+    fi
+    echo ""
 else
-    echo "File limit: unlimited"
+    echo "Creating dub-synchronized chip layout movie"
+    echo "==========================================="
+    echo "CSV Database: $CSV_DATABASE"
+    echo "Image list: $IMAGE_LIST"
+    echo "Audio file: $AUDIO_FILE"
+    echo "Audio start: ${AUDIO_START}s"
+    echo "Video duration: ${VIDEO_DURATION}s"
+    echo "Video frame rate: ${VIDEO_FPS} fps (MP4 container rate)"
+    echo "Beat detection threshold: ${BEAT_THRESHOLD} (lower = more sensitive, more beats)"
+    echo "Beat detection method: ${BEAT_METHOD}"
+    echo "Timing: One chip per beat interval (no minimum dwell time)"
+    echo "Output file: $OUTPUT_FILE"
+    echo "Compression (CRF): $CRF"
+    if [ "$FILE_LIMIT" -gt 0 ]; then
+        echo "File limit: $FILE_LIMIT files (test mode)"
+    else
+        echo "File limit: unlimited"
+    fi
+    echo ""
 fi
-echo ""
 
 # Function to extract year from normalized_date (YYYY-MM-DD format)
 extract_year() {
@@ -307,22 +346,35 @@ overlay_title_block() {
 echo "Calculating timing statistics..."
 ESTIMATED_IMAGES=$(wc -l < "$IMAGE_LIST" 2>/dev/null || echo "0")
 
-echo ""
-echo "==========================================="
-echo "MOVIE TIMING SUMMARY"
-echo "==========================================="
-echo "Video duration: ${VIDEO_DURATION}s"
-echo "Audio start: ${AUDIO_START}s"
-echo "Available images: $ESTIMATED_IMAGES"
-echo "Timing: Chips change exactly at each beat"
-echo ""
-echo "Strategy:"
-echo "  - Extract audio segment first"
-echo "  - Detect beats directly from extracted audio segment"
-echo "  - Create segments starting at each beat (aligned with audio)"
-echo "  - Chips will be randomly subsampled to match number of beats"
-echo ""
-echo "==========================================="
+if [ "$SHORT_MODE" = true ]; then
+    echo ""
+    echo "==========================================="
+    echo "SHORT MODE: ONE CHIP PER FRAME"
+    echo "==========================================="
+    echo "Available images: $ESTIMATED_IMAGES"
+    echo "Timing: One chip image per frame"
+    echo "Pause: 0.5s on first and last frame"
+    echo "Audio: None"
+    echo ""
+    echo "==========================================="
+else
+    echo ""
+    echo "==========================================="
+    echo "MOVIE TIMING SUMMARY"
+    echo "==========================================="
+    echo "Video duration: ${VIDEO_DURATION}s"
+    echo "Audio start: ${AUDIO_START}s"
+    echo "Available images: $ESTIMATED_IMAGES"
+    echo "Timing: Chips change exactly at each beat"
+    echo ""
+    echo "Strategy:"
+    echo "  - Extract audio segment first"
+    echo "  - Detect beats directly from extracted audio segment"
+    echo "  - Create segments starting at each beat (aligned with audio)"
+    echo "  - Chips will be randomly subsampled to match number of beats"
+    echo ""
+    echo "==========================================="
+fi
 if false; then
     # Check if USE_ALL_FRAMES environment variable is set
     if [ "${USE_ALL_FRAMES:-false}" = "true" ]; then
@@ -378,6 +430,469 @@ fi
 # No prompt needed - automatically proceed with beat-synchronized timing
 echo ""
 
+# Handle short mode separately
+if [ "$SHORT_MODE" = true ]; then
+    # SHORT MODE: One chip per frame, no audio, 0.5s pause on first and last frame
+    
+    # Step 1: Load all chips
+    echo "Step 1: Loading all chips..."
+    CSV_SORTED="${CSV_SORTED:-$CHIP_DIR/chip_database_sorted.csv}"
+    
+    if [ ! -f "$CSV_SORTED" ]; then
+        echo "Warning: Sorted CSV not found at $CSV_SORTED"
+        echo "Creating sorted CSV from $CSV_DATABASE..."
+        "$(dirname "$0")/sort_chip_database_by_date.sh"
+        CSV_SORTED="$CHIP_DIR/chip_database_sorted.csv"
+    fi
+    
+    if [ ! -f "$CSV_SORTED" ]; then
+        echo "Error: Could not create or find sorted CSV file"
+        exit 1
+    fi
+    
+    # Extract chips from sorted CSV and match with image list
+    SORTED_LIST="$TEMP_DIR/selected_chips.txt"
+    > "$SORTED_LIST"
+    
+    PYTHON_CHIP_SCRIPT="$TEMP_DIR/extract_chips.py"
+    cat > "$PYTHON_CHIP_SCRIPT" <<PYTHON_EOF
+import csv
+import sys
+import os
+
+csv_file = "$CSV_SORTED"
+image_list_file = "$IMAGE_LIST"
+
+# Load image list to check which chips have images
+chips_with_images = set()
+if os.path.exists(image_list_file):
+    with open(image_list_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.endswith('_layout.png'):
+                basename = os.path.basename(line)
+                pname = basename.replace('_layout.png', '')
+                chips_with_images.add(pname)
+
+# Read sorted CSV and output chips that have images
+with open(csv_file, 'r', encoding='utf-8') as f:
+    reader = csv.reader(f)
+    next(reader)  # Skip header
+    for row in reader:
+        if len(row) >= 16:
+            pname = row[3].strip()
+            username = row[2].strip()
+            normalized_date = row[14].strip()
+            
+            if pname and pname in chips_with_images:
+                # Find thumbnail path
+                thumbnail = None
+                with open(image_list_file, 'r') as imgf:
+                    for img_line in imgf:
+                        img_line = img_line.strip()
+                        if img_line.endswith(f"{pname}_layout.png"):
+                            thumbnail = img_line.replace('_layout.png', '_layout_thumbnail.png')
+                            if os.path.exists(thumbnail):
+                                print(f"{normalized_date}|{username}|{pname}|{thumbnail}")
+                                break
+PYTHON_EOF
+    
+    python3 "$PYTHON_CHIP_SCRIPT" > "$TEMP_DIR/all_available_chips.txt" 2>&1
+    
+    TOTAL_AVAILABLE=$(wc -l < "$TEMP_DIR/all_available_chips.txt" 2>/dev/null || echo "0")
+    if [ "$TOTAL_AVAILABLE" -eq 0 ]; then
+        echo "ERROR: No chips found!" >&2
+        echo "Python script output:" >&2
+        head -20 "$TEMP_DIR/all_available_chips.txt" >&2
+        exit 1
+    fi
+    echo "Found $TOTAL_AVAILABLE chips with images"
+    
+    # Apply FILE_LIMIT if set
+    if [ "$FILE_LIMIT" -gt 0 ] && [ "$FILE_LIMIT" -lt "$TOTAL_AVAILABLE" ]; then
+        head -n "$FILE_LIMIT" "$TEMP_DIR/all_available_chips.txt" > "$TEMP_DIR/all_available_chips_limited.txt"
+        mv "$TEMP_DIR/all_available_chips_limited.txt" "$TEMP_DIR/all_available_chips.txt"
+        TOTAL_AVAILABLE="$FILE_LIMIT"
+        echo "Limited to $FILE_LIMIT chips (FILE_LIMIT set)"
+    fi
+    
+    # Add index to all chips: index|normalized_date|username|pname|thumbnail
+    awk '{print NR "|" $0}' "$TEMP_DIR/all_available_chips.txt" > "$SORTED_LIST"
+    TOTAL_SELECTED="$TOTAL_AVAILABLE"
+    echo "Using all $TOTAL_SELECTED chips"
+    echo ""
+    
+    # Step 2: Create annotated images cache
+    echo "Step 2: Creating annotated images cache..."
+    mkdir -p "$ANNOTATED_DIR"
+    
+    CACHE_MAP="$CACHE_DIR/chip_cache_map.txt"
+    > "$CACHE_MAP"
+    
+    TOTAL_TO_CACHE="$TOTAL_AVAILABLE"
+    CACHED=0
+    CREATED=0
+    COUNT=0
+    
+    echo "Caching annotated images for all $TOTAL_TO_CACHE chips..."
+    
+    while IFS='|' read -r normalized_date username pname thumbnail; do
+        ((COUNT++))
+        
+        cached_image="$ANNOTATED_DIR/$(printf "%06d.png" $COUNT)"
+        echo "$COUNT|$pname|$cached_image" >> "$CACHE_MAP"
+        
+        if [ -f "$cached_image" ]; then
+            if identify "$cached_image" >/dev/null 2>&1; then
+                ((CACHED++))
+                if [ $((COUNT % 100)) -eq 0 ]; then
+                    echo "  Cached $COUNT/$TOTAL_TO_CACHE chips... (cached: $CACHED, created: $CREATED)"
+                fi
+                continue
+            else
+                rm -f "$cached_image"
+            fi
+        fi
+        
+        year=$(extract_year "$normalized_date")
+        if [ -z "$year" ] || [ "$year" = "9999" ]; then
+            year="?"
+        fi
+        chip_name=$(extract_chip_name "$pname")
+        
+        overlay_title_block "$thumbnail" "$cached_image" "$year" "$chip_name" "$username"
+        ((CREATED++))
+        
+        if [ $((COUNT % 100)) -eq 0 ]; then
+            echo "  Cached $COUNT/$TOTAL_TO_CACHE chips... (cached: $CACHED, created: $CREATED)"
+        fi
+    done < "$TEMP_DIR/all_available_chips.txt"
+    
+    echo "Cache complete: $CACHED cached, $CREATED newly created (total: $COUNT chips)"
+    echo ""
+    
+    # Step 3: Create mapping for selected chips
+    echo "Step 3: Creating mapping for selected chips..."
+    CHIP_YEAR_MAP="$TEMP_DIR/chip_year_map.txt"
+    > "$CHIP_YEAR_MAP"
+    
+    chip_idx=0
+    while IFS='|' read -r chip_index normalized_date username pname thumbnail; do
+        ((chip_idx++))
+        
+        cached_image="$ANNOTATED_DIR/$(printf "%06d.png" $chip_index)"
+        
+        year=$(extract_year "$normalized_date")
+        if [ -z "$year" ] || [ "$year" = "9999" ]; then
+            year="?"
+        fi
+        chip_name=$(extract_chip_name "$pname")
+        
+        echo "$chip_idx|$year|$normalized_date|$chip_name|$username|$pname|$cached_image" >> "$CHIP_YEAR_MAP"
+    done < "$SORTED_LIST"
+    
+    echo "Created mapping for $chip_idx selected chips"
+    echo ""
+    
+    # Get video dimensions from first chip image
+    VIDEO_WIDTH=""
+    VIDEO_HEIGHT=""
+    if [ "$TOTAL_SELECTED" -gt 0 ]; then
+        first_chip_info=$(awk -F'|' -v idx="1" '$1 == idx {print $0; exit}' "$CHIP_YEAR_MAP")
+        if [ -n "$first_chip_info" ]; then
+            first_chip_image=$(echo "$first_chip_info" | cut -d'|' -f7)
+            if [ -f "$first_chip_image" ]; then
+                VIDEO_WIDTH=$(identify -format "%w" "$first_chip_image" 2>/dev/null)
+                VIDEO_HEIGHT=$(identify -format "%h" "$first_chip_image" 2>/dev/null)
+                if [ -n "$VIDEO_WIDTH" ] && [ -n "$VIDEO_HEIGHT" ]; then
+                    echo "Video dimensions determined from chip images: ${VIDEO_WIDTH}x${VIDEO_HEIGHT}"
+                fi
+            fi
+        fi
+    fi
+    if [ -z "$VIDEO_WIDTH" ] || [ -z "$VIDEO_HEIGHT" ]; then
+        echo "Warning: Could not determine video dimensions, using default 1920x1080"
+        VIDEO_WIDTH=1920
+        VIDEO_HEIGHT=1080
+    fi
+    echo ""
+    
+    # Step 4: Create video directly from images (one frame per chip, with 0.5s pause on first and last)
+    echo "Step 4: Creating video from chip images..."
+    
+    # Calculate durations
+    PAUSE_DURATION="0.5"
+    SINGLE_FRAME_DURATION=$(echo "scale=6; 1 / $VIDEO_FPS" | bc -l 2>/dev/null || echo "0.016667")
+    
+    # Build list of images with their durations for ffmpeg concat filter
+    IMAGE_LIST_FILE="$TEMP_DIR/image_list.txt"
+    > "$IMAGE_LIST_FILE"
+    
+    FRAME_COUNT=0
+    
+    # First frame: 0.5s pause (showing first chip)
+    if [ "$TOTAL_SELECTED" -gt 0 ]; then
+        first_chip_info=$(awk -F'|' -v idx="1" '$1 == idx {print $0; exit}' "$CHIP_YEAR_MAP")
+        if [ -n "$first_chip_info" ]; then
+            first_chip_image=$(echo "$first_chip_info" | cut -d'|' -f7)
+            if [ -f "$first_chip_image" ]; then
+                abs_path=$(realpath "$first_chip_image")
+                echo "$abs_path|$PAUSE_DURATION" >> "$IMAGE_LIST_FILE"
+                ((FRAME_COUNT++))
+            fi
+        fi
+    fi
+    
+    # All chips: one frame per chip (including first and last)
+    for chip_num in $(seq 1 $TOTAL_SELECTED); do
+        chip_info=$(awk -F'|' -v idx="$chip_num" '$1 == idx {print $0; exit}' "$CHIP_YEAR_MAP")
+        if [ -z "$chip_info" ]; then
+            continue
+        fi
+        
+        frame_file=$(echo "$chip_info" | cut -d'|' -f7)
+        
+        if [ ! -f "$frame_file" ]; then
+            continue
+        fi
+        
+        abs_path=$(realpath "$frame_file")
+        echo "$abs_path|$SINGLE_FRAME_DURATION" >> "$IMAGE_LIST_FILE"
+        ((FRAME_COUNT++))
+    done
+    
+    # Last frame: 0.5s pause (use last chip)
+    if [ "$TOTAL_SELECTED" -gt 0 ]; then
+        last_chip_info=$(awk -F'|' -v idx="$TOTAL_SELECTED" '$1 == idx {print $0; exit}' "$CHIP_YEAR_MAP")
+        if [ -n "$last_chip_info" ]; then
+            last_chip_image=$(echo "$last_chip_info" | cut -d'|' -f7)
+            if [ -f "$last_chip_image" ]; then
+                abs_path=$(realpath "$last_chip_image")
+                echo "$abs_path|$PAUSE_DURATION" >> "$IMAGE_LIST_FILE"
+                ((FRAME_COUNT++))
+            fi
+        fi
+    fi
+    
+    echo "Created image list with $FRAME_COUNT entries"
+    echo ""
+    
+    # Step 5: Create uncompressed video segments (much faster, no encoding)
+    # Then concatenate and transcode to MP4 in final step
+    echo "Step 5: Creating uncompressed video segments from images..."
+    
+    SEGMENTS_DIR="$TEMP_DIR/segments"
+    mkdir -p "$SEGMENTS_DIR"
+    SEGMENT_LIST="$TEMP_DIR/segments.txt"
+    > "$SEGMENT_LIST"
+    
+    # Calculate frame counts
+    PAUSE_FRAMES=$(echo "scale=0; (0.5 * $VIDEO_FPS) / 1" | bc -l 2>/dev/null || echo "30")
+    SINGLE_FRAME=1
+    
+    TOTAL_IMAGES=$(wc -l < "$IMAGE_LIST_FILE" 2>/dev/null || echo "0")
+    echo "Processing $TOTAL_IMAGES images (creating uncompressed segments)..."
+    
+    SEGMENT_COUNT=0
+    IMAGE_COUNT=0
+    SKIPPED_COUNT=0
+    
+    # Process each image - create uncompressed rawvideo segments
+    # Use file descriptor to avoid subshell issues
+    exec 3< "$IMAGE_LIST_FILE"
+    while IFS='|' read -r image_path duration <&3; do
+        # Skip empty lines
+        [ -z "$image_path" ] && [ -z "$duration" ] && continue
+        
+        if [ ! -f "$image_path" ]; then
+            ((SKIPPED_COUNT++))
+            continue
+        fi
+        
+        ((IMAGE_COUNT++))
+        
+        # Calculate frame count from duration
+        if [ "$(echo "$duration >= 0.5" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+            # Pause segment (0.5s)
+            frame_count="$PAUSE_FRAMES"
+        else
+            # Single frame
+            frame_count="$SINGLE_FRAME"
+        fi
+        
+        # Use rawvideo format (uncompressed) - much faster
+        segment_file="$SEGMENTS_DIR/segment_$(printf "%06d" $SEGMENT_COUNT).yuv"
+        
+        # Create uncompressed segment - no encoding, just scaling
+        ffmpeg -y -loop 1 -i "$image_path" \
+            -frames:v "$frame_count" \
+            -vf "scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:flags=lanczos" \
+            -r "$VIDEO_FPS" \
+            -f rawvideo \
+            -pix_fmt yuv420p \
+            "$segment_file" \
+            -loglevel error 2>"$TEMP_DIR/ffmpeg_seg_${SEGMENT_COUNT}.log"
+        
+        if [ -f "$segment_file" ] && [ -s "$segment_file" ]; then
+            # Store segment info: file path, frame count, width, height
+            echo "$segment_file|$frame_count|${VIDEO_WIDTH}|${VIDEO_HEIGHT}" >> "$SEGMENT_LIST"
+            ((SEGMENT_COUNT++))
+            
+            # Progress update every 50 images
+            if [ $((IMAGE_COUNT % 50)) -eq 0 ]; then
+                echo "  Processed $IMAGE_COUNT/$TOTAL_IMAGES images..."
+            fi
+        else
+            echo "Warning: Failed to create segment for $image_path" >&2
+        fi
+    done
+    exec 3<&-
+    
+    echo "Created $SEGMENT_COUNT uncompressed segments"
+    if [ "$SKIPPED_COUNT" -gt 0 ]; then
+        echo "  Skipped (file not found): $SKIPPED_COUNT images"
+    fi
+    echo ""
+    
+    # Step 6: Concatenate uncompressed segments into single rawvideo file, then encode to MP4
+    echo "Step 6: Concatenating rawvideo segments..."
+    
+    # Calculate frame size for yuv420p
+    FRAME_SIZE=$((VIDEO_WIDTH * VIDEO_HEIGHT * 3 / 2))
+    CONCAT_RAWVIDEO="$TEMP_DIR/concat_rawvideo.yuv"
+    
+    # Concatenate all rawvideo segments by simply appending bytes
+    > "$CONCAT_RAWVIDEO"
+    SEGMENT_COUNT=0
+    
+    while IFS='|' read -r segment_file frame_count width height; do
+        if [ -f "$segment_file" ] && [ -s "$segment_file" ]; then
+            cat "$segment_file" >> "$CONCAT_RAWVIDEO"
+            ((SEGMENT_COUNT++))
+        fi
+    done < "$SEGMENT_LIST"
+    
+    echo "Concatenated $SEGMENT_COUNT segments into rawvideo file"
+    echo ""
+    
+    # Step 7: Encode concatenated rawvideo to MP4
+    echo "Step 7: Encoding to MP4..."
+    
+    # Calculate total frames from segment list
+    TOTAL_FRAMES=0
+    PAUSE_FRAME_COUNT=0
+    CHIP_FRAME_COUNT=0
+    
+    while IFS='|' read -r segment_file frame_count width height; do
+        TOTAL_FRAMES=$((TOTAL_FRAMES + frame_count))
+        if [ "$frame_count" -eq "$PAUSE_FRAMES" ]; then
+            PAUSE_FRAME_COUNT=$((PAUSE_FRAME_COUNT + frame_count))
+        else
+            CHIP_FRAME_COUNT=$((CHIP_FRAME_COUNT + frame_count))
+        fi
+    done < "$SEGMENT_LIST"
+    
+    # Calculate expected duration
+    TOTAL_DURATION=$(echo "scale=2; $TOTAL_FRAMES / $VIDEO_FPS" | bc -l 2>/dev/null || echo "0")
+    CHIP_DURATION=$(echo "scale=2; $CHIP_FRAME_COUNT / $VIDEO_FPS" | bc -l 2>/dev/null || echo "0")
+    PAUSE_DURATION=$(echo "scale=2; $PAUSE_FRAME_COUNT / $VIDEO_FPS" | bc -l 2>/dev/null || echo "0")
+    
+    echo "Duration breakdown:"
+    echo "  Total frames: $TOTAL_FRAMES"
+    echo "  Chip frames: $CHIP_FRAME_COUNT ($CHIP_DURATION seconds)"
+    echo "  Pause frames: $PAUSE_FRAME_COUNT ($PAUSE_DURATION seconds)"
+    echo "  Total duration: $TOTAL_DURATION seconds"
+    echo ""
+    
+    # Verify rawvideo file size matches expected frame count
+    FRAME_SIZE=$((VIDEO_WIDTH * VIDEO_HEIGHT * 3 / 2))  # yuv420p: Y + U/2 + V/2
+    EXPECTED_FILE_SIZE=$((FRAME_SIZE * TOTAL_FRAMES))
+    ACTUAL_FILE_SIZE=$(stat -f%z "$CONCAT_RAWVIDEO" 2>/dev/null || stat -c%s "$CONCAT_RAWVIDEO" 2>/dev/null || echo "0")
+    
+    echo "Verifying rawvideo file:"
+    echo "  Expected size: $EXPECTED_FILE_SIZE bytes ($TOTAL_FRAMES frames × $FRAME_SIZE bytes/frame)"
+    echo "  Actual size: $ACTUAL_FILE_SIZE bytes"
+    
+    if [ "$ACTUAL_FILE_SIZE" -ne "$EXPECTED_FILE_SIZE" ]; then
+        echo "WARNING: File size mismatch! Expected $EXPECTED_FILE_SIZE bytes, got $ACTUAL_FILE_SIZE bytes"
+        echo "  This may cause incorrect duration. Recalculating frames from file size..."
+        CALCULATED_FRAMES=$((ACTUAL_FILE_SIZE / FRAME_SIZE))
+        echo "  Calculated frames from file size: $CALCULATED_FRAMES"
+        if [ "$CALCULATED_FRAMES" -gt 0 ] && [ "$CALCULATED_FRAMES" -ne "$TOTAL_FRAMES" ]; then
+            echo "  Using calculated frame count: $CALCULATED_FRAMES"
+            TOTAL_FRAMES="$CALCULATED_FRAMES"
+        fi
+    fi
+    echo ""
+    
+    # Encode rawvideo to MP4
+    # Use -sseof to ensure we read exactly the right amount, or let ffmpeg calculate from file size
+    ffmpeg -y -f rawvideo \
+        -video_size "${VIDEO_WIDTH}x${VIDEO_HEIGHT}" \
+        -pixel_format yuv420p \
+        -framerate "$VIDEO_FPS" \
+        -i "$CONCAT_RAWVIDEO" \
+        -frames:v "$TOTAL_FRAMES" \
+        -c:v libx264 \
+        -preset medium \
+        -crf "$CRF" \
+        -pix_fmt yuv420p \
+        -an \
+        -movflags +faststart \
+        "$OUTPUT_FILE" \
+        -loglevel info
+    
+    if [ ! -f "$OUTPUT_FILE" ] || [ ! -s "$OUTPUT_FILE" ]; then
+        echo "Error: Failed to encode final video"
+        exit 1
+    fi
+    
+    if [ ! -f "$OUTPUT_FILE" ] || [ ! -s "$OUTPUT_FILE" ]; then
+        echo "Error: Failed to create final video"
+        exit 1
+    fi
+    
+    echo "Video creation complete!"
+    
+    if [ ! -f "$OUTPUT_FILE" ] || [ ! -s "$OUTPUT_FILE" ]; then
+        echo "Error: Failed to create video file"
+        exit 1
+    fi
+    
+    if [ -f "$OUTPUT_FILE" ] && [ -s "$OUTPUT_FILE" ]; then
+        if file "$OUTPUT_FILE" | grep -q "MP4\|ISO Media"; then
+            echo ""
+            echo "Successfully created: $OUTPUT_FILE"
+            echo "File size: $(du -h "$OUTPUT_FILE" | cut -f1)"
+            
+            if command -v ffprobe >/dev/null 2>&1; then
+                DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$OUTPUT_FILE" 2>/dev/null | cut -d. -f1)
+                if [ -n "$DURATION" ] && [ "$DURATION" != "N/A" ]; then
+                    echo "Duration: ${DURATION} seconds"
+                fi
+            fi
+            
+            OUTPUT_ABS=$(realpath "$OUTPUT_FILE")
+            echo ""
+            echo "Output file (absolute path):"
+            echo "$OUTPUT_ABS"
+        else
+            echo ""
+            echo "Error: Output file exists but is not a valid MP4"
+            rm -f "$OUTPUT_FILE"
+            exit 1
+        fi
+    else
+        echo ""
+        echo "Error: Failed to create video file"
+        exit 1
+    fi
+    
+    # Short mode complete - exit early
+    exit 0
+fi
+
+# Normal mode continues below with audio processing
 # Step 1: Extract audio segment first
 echo "Step 1: Extracting audio segment (${VIDEO_DURATION}s from ${AUDIO_START}s)..."
 EXTRACTED_AUDIO="$TEMP_DIR/audio_segment.m4a"
